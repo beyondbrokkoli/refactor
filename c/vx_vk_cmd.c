@@ -2,6 +2,7 @@
    vx_vk_cmd.c — Tier 3: Command recording
 */
 #include "vx_vk_cmd.h"
+#include "vx_thread_utils.h"  // ← ADD THIS
 
 EXPORT void vx_stream_allocate_tenant(int wid, VulkanDeviceContext* dev_ctx,
                                       uint32_t gfx_family, uint32_t transfer_family) {

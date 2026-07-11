@@ -2,6 +2,7 @@
    vx_glfw_input.c — Tier 2: Input callbacks
 */
 #include "vx_glfw_input.h"
+#include "vx_thread_utils.h"  // ← ADD THIS
 
 static double  last_mx[MAX_WINDOWS] = {0.0};
 static double  last_my[MAX_WINDOWS] = {0.0};
