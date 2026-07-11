@@ -1,25 +1,11 @@
 /*
-   vx_glfw_multiplexer.c — GLFW window lifecycle, input callbacks,
-   multi-tenant window tracking, and input query exports.
+   vx_glfw_input.c — Tier 2: Input callbacks
 */
-#include "vx_glfw_multiplexer.h"
-
-/* ── File-Local State */
-static bool    s_is_fullscreen[MAX_WINDOWS] = {false};
-static int     s_win_x[MAX_WINDOWS] = {0};
-static int     s_win_y[MAX_WINDOWS] = {0};
-static int     s_win_w[MAX_WINDOWS] = {1280};
-static int     s_win_h[MAX_WINDOWS] = {720};
+#include "vx_glfw_input.h"
 
 static double  last_mx[MAX_WINDOWS] = {0.0};
 static double  last_my[MAX_WINDOWS] = {0.0};
 static bool    first_mouse[MAX_WINDOWS] = {true, true, true, true};
-
-static atomic_flag s_mouse_lock = ATOMIC_FLAG_INIT;
-
-/*
-   GLFW Callbacks
-*/
 
 void glfw_cursor_callback(GLFWwindow* window, double xpos, double ypos) {
     int id = (int)(intptr_t)glfwGetWindowUserPointer(window);
@@ -50,8 +36,7 @@ void glfw_cursor_callback(GLFWwindow* window, double xpos, double ypos) {
     while (!CWX(g_engine.mailbox.tenants[id].mouse_dy, current_dy, new_dy));
 }
 
-void glfw_mouse_button_callback(GLFWwindow* window, int button,
-                                int action, int mods) {
+void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     int id = (int)(intptr_t)glfwGetWindowUserPointer(window);
     if (id < 0 || id >= MAX_WINDOWS) return;
 
@@ -70,13 +55,11 @@ void glfw_mouse_button_callback(GLFWwindow* window, int button,
             S(g_engine.mailbox.tenants[id].mouse_left, 0);
         }
     } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-        S(g_engine.mailbox.tenants[id].mouse_right,
-          (action == GLFW_PRESS) ? 1 : 0);
+        S(g_engine.mailbox.tenants[id].mouse_right, (action == GLFW_PRESS) ? 1 : 0);
     }
 }
 
-void glfw_key_callback(GLFWwindow* window, int key, int scancode,
-                       int action, int mods) {
+void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     int id = (int)(intptr_t)glfwGetWindowUserPointer(window);
     if (id < 0 || id >= MAX_WINDOWS) return;
 
@@ -95,10 +78,8 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode,
             uint32_t mask = L(g_engine.mailbox.tenants[id].wasd_mask);
             uint32_t new_mask;
             do {
-                new_mask = (action == GLFW_PRESS) ? (mask | bit)
-                                                  : (mask & ~bit);
-            } while (!CWX(g_engine.mailbox.tenants[id].wasd_mask,
-                          mask, new_mask));
+                new_mask = (action == GLFW_PRESS) ? (mask | bit) : (mask & ~bit);
+            } while (!CWX(g_engine.mailbox.tenants[id].wasd_mask, mask, new_mask));
         }
     }
 
@@ -107,30 +88,7 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode,
     }
 
     if (key == GLFW_KEY_SPACE) {
-        S(g_engine.mailbox.tenants[id].key_space,
-          (action != GLFW_RELEASE) ? 1 : 0);
-    }
-
-    if (key == GLFW_KEY_F11 && action == GLFW_PRESS) {
-        if (!s_is_fullscreen[id]) {
-            glfwGetWindowPos(window, &s_win_x[id], &s_win_y[id]);
-            glfwGetWindowSize(window, &s_win_w[id], &s_win_h[id]);
-            GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-            const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-            glfwSetWindowMonitor(window, monitor, 0, 0,
-                                 mode->width, mode->height,
-                                 mode->refreshRate);
-            s_is_fullscreen[id] = true;
-            printf("[C-CORE] Tenant %d: Native Fullscreen Engaged "
-                   "(%dx%d @ %dHz)\n",
-                   id, mode->width, mode->height, mode->refreshRate);
-        } else {
-            glfwSetWindowMonitor(window, NULL,
-                                 s_win_x[id], s_win_y[id],
-                                 s_win_w[id], s_win_h[id], 0);
-            s_is_fullscreen[id] = false;
-            printf("[C-CORE] Tenant %d: Windowed Mode Restored\n", id);
-        }
+        S(g_engine.mailbox.tenants[id].key_space, (action != GLFW_RELEASE) ? 1 : 0);
     }
 
     if (key == GLFW_KEY_F10 && action == GLFW_PRESS) {
@@ -147,10 +105,8 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode,
     }
 
     if (action == GLFW_PRESS) {
-        if (key == GLFW_KEY_1 || key == GLFW_KEY_2 ||
-            key == GLFW_KEY_3 || key == GLFW_KEY_4 ||
-            key == GLFW_KEY_F5 || key == GLFW_KEY_ENTER ||
-            key == GLFW_KEY_KP_ENTER) {
+        if (key == GLFW_KEY_1 || key == GLFW_KEY_2 || key == GLFW_KEY_3 || key == GLFW_KEY_4 ||
+            key == GLFW_KEY_F5 || key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
             S(g_engine.mailbox.tenants[id].last_key_pressed, key);
         }
     }
@@ -163,22 +119,6 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode,
         fflush(stdout);
     }
 }
-
-void glfw_framebuffer_size_callback(GLFWwindow* window, int width,
-                                    int height) {
-    if (width == 0 || height == 0) return;
-
-    int id = (int)(intptr_t)glfwGetWindowUserPointer(window);
-    if (id < 0 || id >= MAX_WINDOWS) return;
-
-    S(g_engine.mailbox.tenants[id].win_w, width);
-    S(g_engine.mailbox.tenants[id].win_h, height);
-    S(g_engine.mailbox.tenants[id].window_resized, 1);
-}
-
-/*
-   Input Query Exports
-*/
 
 EXPORT int vx_input_last_key(int win_id) {
     if (win_id < 0 || win_id >= MAX_WINDOWS) return 0;
@@ -239,67 +179,4 @@ EXPORT float vx_input_mouse_dy(int win_id) {
 EXPORT int vx_input_spacebar(int win_id) {
     if (win_id < 0 || win_id >= MAX_WINDOWS) return 0;
     return L(g_engine.mailbox.tenants[win_id].key_space);
-}
-
-
-/*
-   Window System Helpers
-*/
-
-EXPORT int vx_sys_is_tenant_idle(int win_id) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS) return 1;
-
-    // We check two things:
-    // 1. Is the render thread actively looping on this tenant?
-    int busy = L(g_render_busy[win_id]);
-
-    // 2. Has the C-Core finished processing the WSI/Kill command?
-    int cmd = L(g_engine.mailbox.tenants[win_id].glfw_cmd);
-
-    // If it's not busy, AND the command mailbox has been cleared back to IDLE,
-    // we have absolute mathematical certainty that the Vulkan objects are safe to destroy.
-    return (busy == 0 && cmd == CMD_IDLE) ? 1 : 0;
-}
-
-EXPORT int vx_sys_get_resize_state(int win_id) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS) return 0;
-    return atomic_load_explicit(
-        &g_engine.mailbox.tenants[win_id].window_resized,
-        memory_order_acquire);
-}
-
-EXPORT const char** vx_sys_glfw_extensions(uint32_t* count) {
-    return glfwGetRequiredInstanceExtensions(count);
-}
-
-EXPORT void vx_sys_publish_instance(int win_id, void* instance) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS) return;
-    S(g_engine.mailbox.tenants[win_id].vk_instance, instance);
-}
-
-EXPORT void* vx_sys_get_surface(int win_id) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS) return NULL;
-    return L(g_engine.mailbox.tenants[win_id].vk_surface);
-}
-
-EXPORT void vx_sys_set_cmd(int win_id, int cmd, int w, int h) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS) return;
-    S_R(g_engine.mailbox.tenants[win_id].glfw_arg_w, w);
-    S_R(g_engine.mailbox.tenants[win_id].glfw_arg_h, h);
-    S(g_engine.mailbox.tenants[win_id].glfw_cmd, cmd);
-}
-
-EXPORT int vx_sys_get_cmd(int win_id) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS) return 0;
-    // Uses acquire semantics to ensure we see the C-core's memset barrier
-    return L(g_engine.mailbox.tenants[win_id].glfw_cmd);
-}
-
-EXPORT void vx_sys_window_size(int win_id, int* w, int* h) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS) {
-        *w = 0; *h = 0;
-        return;
-    }
-    *w = L(g_engine.mailbox.tenants[win_id].win_w);
-    *h = L(g_engine.mailbox.tenants[win_id].win_h);
 }

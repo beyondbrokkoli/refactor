@@ -1,11 +1,8 @@
-#pragma once
-
 /*
-   vx_vulkan_core.h — Vulkan instance-level utilities and
-   validation layer injection/ejection.
+   vx_vk_core.h — Tier 3: Vulkan foundation
 */
-
-#include "vx_global_state.h"
+#pragma once
+#include "vx_types.h"
 
 #ifdef __cplusplus
 extern "C" {

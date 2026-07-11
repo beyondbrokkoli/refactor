@@ -1,13 +1,9 @@
 /*
-   vx_vulkan_core.c — Debug messenger lifecycle and validation
-   layer enforcement.
+   vx_vk_core.c — Tier 3: Vulkan foundation
 */
-#include "vx_vulkan_core.h"
+#include "vx_vk_core.h"
 
-/* ── File-Local State */
 static VkDebugUtilsMessengerEXT g_debugMessenger = VK_NULL_HANDLE;
-
-/* ── Debug Callback */
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT      messageSeverity,
@@ -23,8 +19,6 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
     fflush(stdout);
     return VK_FALSE;
 }
-
-/* ── Exports */
 
 EXPORT void vx_sys_inject_validation(void* instance_ptr) {
     VkInstance instance = (VkInstance)instance_ptr;
@@ -43,23 +37,20 @@ EXPORT void vx_sys_inject_validation(void* instance_ptr) {
 
     PFN_vkCreateDebugUtilsMessengerEXT func =
         (PFN_vkCreateDebugUtilsMessengerEXT)
-            glfwGetInstanceProcAddress(instance,
-                                       "vkCreateDebugUtilsMessengerEXT");
+            glfwGetInstanceProcAddress(instance, "vkCreateDebugUtilsMessengerEXT");
 
     if (func != NULL) {
         func(instance, &createInfo, NULL, &g_debugMessenger);
         printf("[C-CORE] Validation Layer Enforcer Injected Successfully!\n");
     } else {
-        printf("[C-FATAL] Failed to setup debug messenger "
-               "(VK_EXT_debug_utils not found).\n");
+        printf("[C-FATAL] Failed to setup debug messenger (VK_EXT_debug_utils not found).\n");
     }
 }
 
 EXPORT void vx_sys_eject_validation(void* instance) {
     PFN_vkDestroyDebugUtilsMessengerEXT destroyFn =
         (PFN_vkDestroyDebugUtilsMessengerEXT)
-            vkGetInstanceProcAddr((VkInstance)instance,
-                                  "vkDestroyDebugUtilsMessengerEXT");
+            vkGetInstanceProcAddr((VkInstance)instance, "vkDestroyDebugUtilsMessengerEXT");
     if (destroyFn != NULL) {
         destroyFn((VkInstance)instance, g_debugMessenger, NULL);
     }
