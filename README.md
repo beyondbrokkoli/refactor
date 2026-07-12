@@ -1,3 +1,27 @@
+## Playing on Linux
+
+```
+sudo pacman -S luajit
+bin/boot.elf
+```
+
+## Building on Linux
+
+```
+sudo pacman -S luajit
+sudo pacman -S vulkan-headers
+lua build.lua linux
+```
+
+
+## Enabling validation layers
+
+```
+sudo pacman -S vulkan-validation-layers
+nano lua/config_gfx.lua # Set validation to 1
+```
+
+
 ## ⚙️ Runtime Controls
 
 | Key | Action | Description |
