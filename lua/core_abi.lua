@@ -114,9 +114,6 @@ typedef struct {
 
 int vkGetSemaphoreCounterValue(void* device, void* semaphore, uint64_t* pValue);
 
-// --- Math Extensions ---
-typedef struct __attribute__((aligned(16))) { float m[16]; } mat4_t;
-
 // --- Game State (Dynamic Dimensioning SSoT) ---
 typedef struct {
     uint16_t terrain[8][%d];

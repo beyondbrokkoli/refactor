@@ -7,12 +7,11 @@ local renderer = require("renderer")
 local camera_mod = require("camera")
 
 -- 1. DUPLICATE THE OS TIMERS HERE
--- ADDING THIS DIDNT HELP THE ISSUE THAT WAS MY MISTAKE I LEFT IT HERE TO STAY HONEST
 local function sys_sleep(ms)
-    if jit.os == "Windows" then
-        ffi.C.Sleep(ms)
+    if coroutine.running() then
+        coroutine.yield()
     else
-        ffi.C.usleep(ms * 1000)
+        if jit.os == "Windows" then ffi.C.Sleep(ms) else ffi.C.usleep(ms * 1000) end
     end
 end
 
