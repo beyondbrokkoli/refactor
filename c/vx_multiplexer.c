@@ -197,13 +197,26 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
             VulkanSwapchainContext* win_wsi = &g_wsi_ctx[wid][active_idx];
 
+            // 1. CHECK STATUS FIRST to ensure we don't touch a dead WSI
+            uint32_t w_status = atomic_load_explicit((_Atomic uint32_t*)&win_wsi->status, memory_order_acquire);
+
+            if (win_wsi->swapchain == VK_NULL_HANDLE || L(g_wsi_state[wid]) == 0 ||
+                p->width == 0 || p->height == 0 || w_status != 1) {
+                goto frame_done;
+            }
+
             uint32_t frame_slots = dev_ctx->max_frames_in_flight > 0 ? dev_ctx->max_frames_in_flight : 3;
             if (frame_slots > 3) frame_slots = 3;
             uint32_t current_frame = t_frame[wid] % frame_slots;
 
-            VkFence immortal_fence = g_render_fences[wid][current_frame];
+            // 2. THE GOLDEN FIX: Use the generation-specific fence passed from Lua!
+            VkFence active_fence = (VkFence)win_wsi->in_flight[current_frame];
+            if (active_fence == VK_NULL_HANDLE) {
+                goto frame_done;
+            }
+
             PFN_vkWaitForFences pfnWait = (PFN_vkWaitForFences)dev_ctx->vkWaitForFences;
-            if (pfnWait(dev_ctx->device, 1, &immortal_fence, VK_TRUE, 2000000000) == VK_TIMEOUT) {
+            if (pfnWait(dev_ctx->device, 1, &active_fence, VK_TRUE, 2000000000) == VK_TIMEOUT) {
                 printf("[C-WARN] Tenant %d: GPU Fence Timeout (CPU Starvation).\n", wid);
                 goto frame_done;
             }
@@ -238,10 +251,10 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             if (win_wsi->images_in_flight_fences[img_idx] != VK_NULL_HANDLE) {
                 pfnWait(dev_ctx->device, 1, &win_wsi->images_in_flight_fences[img_idx], VK_TRUE, 2000000000);
             }
-            win_wsi->images_in_flight_fences[img_idx] = immortal_fence;
+            win_wsi->images_in_flight_fences[img_idx] = active_fence; // <-- Updated
 
             PFN_vkResetFences pfnReset = (PFN_vkResetFences)dev_ctx->vkResetFences;
-            pfnReset(dev_ctx->device, 1, &immortal_fence);
+            pfnReset(dev_ctx->device, 1, &active_fence); // <-- Updated
 
             uint64_t local_image = win_wsi->swapchain_images[img_idx];
             uint64_t local_view  = win_wsi->swapchain_views[img_idx];
@@ -266,7 +279,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             };
 
             PFN_vkQueueSubmit pfnSubmit = (PFN_vkQueueSubmit)dev_ctx->vkQueueSubmit;
-            pfnSubmit(dev_ctx->queue, 1, &submitInfo, immortal_fence);
+            pfnSubmit(dev_ctx->queue, 1, &submitInfo, active_fence); // <-- Updated
 
             VkPresentInfoKHR presentInfo = {
                 .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
