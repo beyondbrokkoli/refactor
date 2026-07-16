@@ -479,16 +479,12 @@ local function main()
             if tenant.zombies and #tenant.zombies > 0 then
                 local survivor_zombies = {}
                 for _, z in ipairs(tenant.zombies) do
-                    -- THE FIX: Check elapsed real time instead of simulation ticks
+                    -- Lua ONLY manages the Logical Pipeline (gfx) now.
                     if total_time - z.time_added > 1.0 then
                         require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx)
 
-                        -- [FIX]: C-Core destroys the semaphores, so we MUST ONLY destroy the fences!
-                        if z.sync then
-                            for i = 0, z.sync.safe_frames - 1 do
-                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
-                            end
-                        end
+                        -- DELETED: Fence destruction.
+                        -- The C-Core is now destroying the sync primitives safely!
                     else
                         table.insert(survivor_zombies, z)
                     end
