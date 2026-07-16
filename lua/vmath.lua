@@ -4,10 +4,7 @@ local math = require("math")
 
 local vmath = {}
 
-ffi.cdef[[
-    typedef struct __attribute__((aligned(16))) { float x, y, z, w; } vec4_t;
-    typedef struct __attribute__((aligned(16))) { float m[16]; } mat4_t;
-]]
+require("core_abi")
 
 -- [FIX APPLIED] Removed all root-level temp FFI allocations
 

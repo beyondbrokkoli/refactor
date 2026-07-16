@@ -62,6 +62,22 @@ else
     end
 end
 
+local function SpawnTenant(vk_rt, desc, manifest, win_id, target_w, target_h, scene_type)
+    if TenantRegistry.active[win_id] then
+        print(string.format("[UI] Tenant %d is already active!", win_id))
+        return
+    end
+
+    local tenant = TenantRegistry.boot_tenant(vk_rt, win_id, target_w, target_h, cfg_gfx.cfg.frame_slots)
+    tenant.scene_type = scene_type
+
+    local graphics_mod = require("graphics_pipeline")
+    tenant.gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt, target_w, target_h, desc.pipelineLayout, tenant.sc.format, manifest.graphics
+    )
+    print(string.format("[LUA] Dynamically spawned Tenant %d as '%s'", win_id, scene_type))
+end
+
 -- 4. BOOTSTRAP COROUTINE
 local function boot_weaver()
     local boot_ctx = { win_id = 0, old_swapchain = nil }
@@ -222,6 +238,12 @@ local function main()
     -- Upgrade prev_mouse_left to track per-tenant
     --local prev_mouse_left = { [0] = false, [1] = false }
     local prev_mouse_left = { [0] = false, [1] = false, [2] = false, [3] = false }
+
+    local prev_keys = {
+        [cfg_gfx.key.num1] = false,
+        [cfg_gfx.key.num2] = false,
+        [cfg_gfx.key.num3] = false
+    }
 
     local vram_template = ffi.new("RtsTileInstance[?]", ctx.total_tiles)
     for z = 0, cfg_sim.world.map_height - 1 do
