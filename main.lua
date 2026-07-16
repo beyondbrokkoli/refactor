@@ -62,12 +62,20 @@ else
     end
 end
 
--- 4. HEADLESS BOOT SEQUENCE
-local function boot_weaver_headless()
+-- 4. BOOTSTRAP COROUTINE
+local function boot_weaver()
     local boot_ctx = { win_id = 0, old_swapchain = nil }
+
     for i, stage in ipairs(seq.boot) do
         print(string.format("[WEAVER] Executing Stage %d: %s", i, stage.name))
-        stage.action(boot_ctx)
+        local signal = stage.action(boot_ctx)
+        if signal == "AWAIT_SURFACE" then
+            print("[WEAVER] Yielding execution, waiting for C-Core Surface...")
+            while WindowAPI.get_surface(boot_ctx.win_id) == nil do
+                sys_sleep(10)
+                coroutine.yield()
+            end
+        end
     end
     return boot_ctx
 end
@@ -107,7 +115,12 @@ local function main()
     end
 
     print("[LUA IO] Booting Headless Weaver (LABORATORY)...")
-    local engine_ctx = boot_weaver_headless()
+    local co = coroutine.create(boot_weaver)
+    local status, engine_ctx
+    while coroutine.status(co) ~= "dead" do
+        status, engine_ctx = coroutine.resume(co)
+        if not status then error("Fatal Weaver Crash: " .. tostring(engine_ctx)) end
+    end
 
     print("[LUA IO] Weaver sequence complete! Unpacking Context...")
     local vk_rt = engine_ctx.vk_runtime
@@ -117,39 +130,59 @@ local function main()
     local sync = engine_ctx.sync_state
     local memory = require("memory")
     local camera_mod = require("camera")
-    local manifest = require("pipeline_manifest")
 
     print("[LUA IO] Host Bedrock Online. Booting Multiplexer Tenants...")
     local TenantRegistry = require("tenant_registry")
-
-    local pending_spawns = {}
-
-    local function SpawnTenantAsync(win_id, target_w, target_h, scene_type)
-        if TenantRegistry.active[win_id] or pending_spawns[win_id] then
-            print(string.format("[UI] Tenant %d is already active or booting!", win_id))
-            return
-        end
-
-        local co = coroutine.create(function()
-            local tenant = TenantRegistry.boot_tenant(vk_rt, win_id, target_w, target_h, cfg_gfx.cfg.frame_slots)
-            tenant.scene_type = scene_type
-            local graphics_mod = require("graphics_pipeline")
-            tenant.gfx = graphics_mod.Init(
-                vk_rt.vk, vk_rt, target_w, target_h, desc.pipelineLayout, tenant.sc.format, manifest.graphics
-            )
-            print(string.format("[LUA] Dynamically spawned Tenant %d as '%s'", win_id, scene_type))
-        end)
-        pending_spawns[win_id] = co
-    end
+    local graphics_mod = require("graphics_pipeline")
+    local manifest = require("pipeline_manifest")
 
     -- [CRITICAL FIX]: Start the Global Async Threads!
+    -- The transfer family was established in step_3_logical_device
     local transfer_family = vk_rt.tIndex or 0
     EngineAPI.setup_transfer(transfer_family)
     EngineAPI.start_thread()
     print("[WEAVER] Global Async Overlord is LIVE.")
 
-    -- EXACT SAME FUNCTION USED FOR TENANT 0 AND DYNAMIC LAUNCHES!
-    SpawnTenantAsync(0, cfg_gfx.win.w, cfg_gfx.win.h, "primary_rts")
+    -- 1. Boot Tenant 0 (Primary Game View)
+    TenantRegistry.boot_tenant(vk_rt, 0, cfg_gfx.win.w, cfg_gfx.win.h, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[0].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        cfg_gfx.win.w, cfg_gfx.win.h,
+        desc.pipelineLayout,
+        TenantRegistry.active[0].sc.format,
+        manifest.graphics
+    )
+
+    -- 2. Boot Tenant 1 (Editor)
+    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[1].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[1].sc.format,
+        manifest.graphics
+    )
+
+    -- 3. Boot Tenant 2 (Reverse-Z Analytics)
+    TenantRegistry.boot_tenant(vk_rt, 2, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[2].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[2].sc.format,
+        manifest.graphics
+    )
+
+    -- (Optional) Boot Tenant 3 if you need it right away
+    -- 4. Boot Tenant 3
+    TenantRegistry.boot_tenant(vk_rt, 3, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[3].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[3].sc.format,
+        manifest.graphics
+    )
 
     print("[LUA CO] Multi-Tenant Registry Online.")
 
@@ -242,23 +275,7 @@ local function main()
     local last_time = get_time_hires()
     local last_heartbeat = get_time_hires() -- [!] Restored from legacy build
 
-    local prev_keys = {
-        [cfg_gfx.key.num1] = false,
-        [cfg_gfx.key.num2] = false,
-        [cfg_gfx.key.num3] = false
-    }
-
     while EngineAPI.is_running() do
-        -- 1. TICK THE ASYNC WINDOW SPAWNER
-        for id, co in pairs(pending_spawns) do
-            if coroutine.status(co) ~= "dead" then
-                local success, err = coroutine.resume(co)
-                if not success then error("[SPAWN ERROR] " .. tostring(err)) end
-            else
-                pending_spawns[id] = nil
-            end
-        end
-
         local current_time = get_time_hires()
         local frame_time = math.max(0.001, math.min(current_time - last_time, 0.25))
         last_time = current_time
@@ -337,24 +354,6 @@ local function main()
         -- 3. Only process input for the definitively active window
         if active_win_id >= 0 and TenantRegistry.active[active_win_id] then
             local tenant = TenantRegistry.active[active_win_id]
-
-            -- A. DYNAMIC TENANT SPAWNING
-            local spawn_map = {
-                [cfg_gfx.key.num1 or 49] = { id = 1, w = 800, h = 600, type = "editor" },
-                [cfg_gfx.key.num2 or 50] = { id = 2, w = 800, h = 600, type = "analytics" },
-                [cfg_gfx.key.num3 or 51] = { id = 3, w = 800, h = 600, type = "reverse_z_swarm" }
-            }
-
-            for key, data in pairs(spawn_map) do
-                local is_down = WindowAPI.is_key_down(active_win_id, key)
-                if prev_keys[key] == nil then prev_keys[key] = false end
-
-                if is_down and not prev_keys[key] then
-                    SpawnTenantAsync(data.id, data.w, data.h, data.type)
-                end
-                prev_keys[key] = is_down
-            end
-
             local is_down = WindowAPI.is_mouse_down(active_win_id, 0)
 
             if is_down and not prev_mouse_left[active_win_id] then
