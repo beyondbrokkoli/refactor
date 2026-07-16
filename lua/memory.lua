@@ -1,34 +1,10 @@
 local ffi = require("ffi")
 local bit = require("bit")
-
+require("core_abi")
 -- [NEW] Explicit Decoupled Imports
 local reg = require("registry_vk")
 local vk_mem = reg.vk_mem
 local vk_struct = reg.vk_struct
-
-local is_windows = (ffi.os == "Windows")
-if is_windows then
-    ffi.cdef[[
-        void* _aligned_malloc(size_t size, size_t alignment);
-        void _aligned_free(void* ptr);
-    ]]
-else
-    ffi.cdef[[
-        void* aligned_alloc(size_t alignment, size_t size);
-        void free(void* ptr);
-    ]]
-end
-
-ffi.cdef[[
-    typedef struct {
-        uint32_t sType;
-        void* pNext;
-        uint32_t semaphoreType;
-        uint64_t initialValue;
-    } VkSemaphoreTypeCreateInfo;
-
-    int vkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* pValue);
-]]
 
 local function platform_aligned_alloc(alignment, size)
     if is_windows then return ffi.C._aligned_malloc(size, alignment)
