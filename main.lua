@@ -62,22 +62,6 @@ else
     end
 end
 
-local function SpawnTenant(vk_rt, desc, manifest, win_id, target_w, target_h, scene_type)
-    if TenantRegistry.active[win_id] then
-        print(string.format("[UI] Tenant %d is already active!", win_id))
-        return
-    end
-
-    local tenant = TenantRegistry.boot_tenant(vk_rt, win_id, target_w, target_h, cfg_gfx.cfg.frame_slots)
-    tenant.scene_type = scene_type
-
-    local graphics_mod = require("graphics_pipeline")
-    tenant.gfx = graphics_mod.Init(
-        vk_rt.vk, vk_rt, target_w, target_h, desc.pipelineLayout, tenant.sc.format, manifest.graphics
-    )
-    print(string.format("[LUA] Dynamically spawned Tenant %d as '%s'", win_id, scene_type))
-end
-
 -- 4. BOOTSTRAP COROUTINE
 local function boot_weaver()
     local boot_ctx = { win_id = 0, old_swapchain = nil }
@@ -169,6 +153,37 @@ local function main()
         manifest.graphics
     )
 
+    -- 2. Boot Tenant 1 (Editor)
+    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[1].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[1].sc.format,
+        manifest.graphics
+    )
+
+    -- 3. Boot Tenant 2 (Reverse-Z Analytics)
+    TenantRegistry.boot_tenant(vk_rt, 2, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[2].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[2].sc.format,
+        manifest.graphics
+    )
+
+    -- (Optional) Boot Tenant 3 if you need it right away
+    -- 4. Boot Tenant 3
+    TenantRegistry.boot_tenant(vk_rt, 3, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[3].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[3].sc.format,
+        manifest.graphics
+    )
+
     print("[LUA CO] Multi-Tenant Registry Online.")
 
     print("[LUA CO] Initializing VRAM Index Buffer with Strict Topology...")
@@ -207,12 +222,6 @@ local function main()
     -- Upgrade prev_mouse_left to track per-tenant
     --local prev_mouse_left = { [0] = false, [1] = false }
     local prev_mouse_left = { [0] = false, [1] = false, [2] = false, [3] = false }
-
-    local prev_keys = {
-        [cfg_gfx.key.num1] = false,
-        [cfg_gfx.key.num2] = false,
-        [cfg_gfx.key.num3] = false
-    }
 
     local vram_template = ffi.new("RtsTileInstance[?]", ctx.total_tiles)
     for z = 0, cfg_sim.world.map_height - 1 do
@@ -345,27 +354,6 @@ local function main()
         -- 3. Only process input for the definitively active window
         if active_win_id >= 0 and TenantRegistry.active[active_win_id] then
             local tenant = TenantRegistry.active[active_win_id]
-
-            -- =========================================================
-            -- A. DYNAMIC TENANT SPAWNING (Global Engine Hotkeys)
-            -- =========================================================
-            local spawn_map = {
-                [cfg_gfx.key.num1] = { id = 1, w = 800, h = 600, type = "editor" },
-                [cfg_gfx.key.num2] = { id = 2, w = 800, h = 600, type = "analytics" },
-                [cfg_gfx.key.num3] = { id = 3, w = 800, h = 600, type = "reverse_z_swarm" }
-            }
-
-            for key, data in pairs(spawn_map) do
-                local is_down = (ffi.C.vx_input_is_key_down(active_win_id, key) == 1)
-                if is_down and not prev_keys[key] then
-                    SpawnTenant(vk_rt, desc, manifest, data.id, data.w, data.h, data.type)
-                end
-                prev_keys[key] = is_down
-            end
-
-            -- =========================================================
-            -- B. TERRAIN RAYCASTING (Local Window Interaction)
-            -- =========================================================
             local is_down = WindowAPI.is_mouse_down(active_win_id, 0)
 
             if is_down and not prev_mouse_left[active_win_id] then

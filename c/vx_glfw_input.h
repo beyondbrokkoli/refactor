@@ -24,7 +24,6 @@ EXPORT uint32_t   vx_input_wasd(int win_id);
 EXPORT float      vx_input_mouse_dx(int win_id);
 EXPORT float      vx_input_mouse_dy(int win_id);
 EXPORT int        vx_input_spacebar(int win_id);
-EXPORT int        vx_input_is_key_down(int win_id, int key);
 
 #ifdef __cplusplus
 }

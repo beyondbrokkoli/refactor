@@ -8,9 +8,6 @@ static double  last_mx[MAX_WINDOWS] = {0.0};
 static double  last_my[MAX_WINDOWS] = {0.0};
 static bool    first_mouse[MAX_WINDOWS] = {true, true, true, true};
 
-// Track all 512 possible GLFW keys for each window
-static int s_key_states[MAX_WINDOWS][512] = {0};
-
 void glfw_cursor_callback(GLFWwindow* window, double xpos, double ypos) {
     int id = (int)(intptr_t)glfwGetWindowUserPointer(window);
     if (id < 0 || id >= MAX_WINDOWS) return;
@@ -69,11 +66,6 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
 
     S(g_engine.mailbox.active_window, id);
 
-    // 1. The Universal Tracker
-    if (key >= 0 && key < 512) {
-        s_key_states[id][key] = (action != GLFW_RELEASE) ? 1 : 0;
-    }
-
     if (action == GLFW_PRESS || action == GLFW_RELEASE) {
         uint32_t bit = 0;
         if      (key == GLFW_KEY_W) bit = 1;
@@ -127,12 +119,6 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
         }
         fflush(stdout);
     }
-}
-
-// 3. The Universal Getter
-EXPORT int vx_input_is_key_down(int win_id, int key) {
-    if (win_id < 0 || win_id >= MAX_WINDOWS || key < 0 || key < 512) return 0;
-    return s_key_states[win_id][key];
 }
 
 EXPORT int vx_input_last_key(int win_id) {
