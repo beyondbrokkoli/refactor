@@ -390,8 +390,11 @@ local function main()
                 -- STATE 0: IDLE (Detect Resize & Fire Command)
                 if WindowAPI.get_resize_state(win_id) then
                     local new_w, new_h = WindowAPI.get_window_size(win_id)
-                    if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
-                        print(string.format("[LUA FSM] Tenant %d: Resize detected. Firing CMD 4...", win_id))
+
+                    -- [CRITICAL FIX]: Drop the strict mismatch check.
+                    -- If the flag is set, Vulkan or the OS DEMANDS a rebuild.
+                    if new_w > 0 and new_h > 0 then
+                        print(string.format("[LUA FSM] Tenant %d: Resize mandated. Firing CMD 4...", win_id))
 
                         tenant.target_w = new_w
                         tenant.target_h = new_h
