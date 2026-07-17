@@ -1,16 +1,9 @@
+[LUA FSM] Tenant 3: Flipped to Generation 11.
+[C-CORE] Tenant 3: Asynchronous WSI Flip Executed! (New Gen: 11)
 
-[HEARTBEAT] Sim Tick: 7411 | Confirmed: 7409 | Accum: 0.0150
-  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 0 | AckOfMe: 0
-  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 7420 | AckOfMe: 7399
-[INPUT] Window 3 clicked tile 31857
-[LUA CO] Intercepted close request for Tenant 3. Initiating Zombie Teardown V2...
-[C-CORE] Tenant 3: Lock-Free Teardown Initiated. Render thread severed.
-[LUA FSM] Tenant 3: Memory zeroed. Transitioning to Build phase...
+[VULKAN LAYER ENFORCER]
+SEVERITY: 4096
+MESSAGE: vkDestroySemaphore(): can't be called on VkSemaphore 0x1510000000151 that is currently in use by VkQueue 0x219f7a2bb18.
+The Vulkan spec states: All submitted batches that refer to semaphore must have completed execution (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-vkDestroySemaphore-semaphore-05149)
 
-[LUA FATAL ERROR] main.lua:431: attempt to index field 'sc' (a nil value)
-
-[C-CORE] Shutdown triggered. Waiting for Lua VM...
-[C-CORE] Async Render Multiplexer gracefully terminated.
-[C-CORE] Async Transfer Thread gracefully terminated.
-[LUA-OS-THREAD] VM Destroyed.
-
+[C-CORE] Tenant 3: Zombie Swapchain safely garbage collected via aging.
