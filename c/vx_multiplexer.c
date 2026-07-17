@@ -287,7 +287,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
 
             uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_acquire);
-            if (z_status > 2) {
+            if (z_status > 1) {
                 atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_release);
             }
 
