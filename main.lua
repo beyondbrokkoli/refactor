@@ -388,10 +388,14 @@ local function main()
             -- [ZOMBIE PROTOCOL: ASYNC RESIZE STATE MACHINE]
             if tenant.wsi_state == 0 then
                 -- STATE 0: IDLE (Detect Resize & Fire Command)
-                if WindowAPI.get_resize_state(win_id) then
+                -- THE FIX: Explicitly check == 1 because 0 is Truthy in Lua!
+                if WindowAPI.get_resize_state(win_id) == 1 then
                     local new_w, new_h = WindowAPI.get_window_size(win_id)
-                    if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
-                        print(string.format("[LUA FSM] Tenant %d: Resize detected. Firing CMD 4...", win_id))
+
+                    -- We drop the strict dimension mismatch check.
+                    -- If the flag is 1, the OS or Vulkan DEMANDS a rebuild.
+                    if new_w > 0 and new_h > 0 then
+                        print(string.format("[LUA FSM] Tenant %d: Resize explicitly flagged. Firing CMD 4...", win_id))
 
                         tenant.target_w = new_w
                         tenant.target_h = new_h
@@ -421,7 +425,8 @@ local function main()
                 local graphics_mod = require("graphics_pipeline")
                 local renderer_mod = require("renderer")
 
-                local old_sc_handle = tenant.sc.handle
+                -- SAFEGUARD: Prevent Lua nil-index crash if a previous swapchain build failed
+                local old_sc_handle = tenant.sc and tenant.sc.handle or nil
 
                 -- [QUEUE LUA GARBAGE]
                 if not tenant.zombies then tenant.zombies = {} end
@@ -472,7 +477,16 @@ local function main()
                 -- [THE FLIP]
                 WindowAPI.flip_wsi(win_id)
                 print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
-                tenant.wsi_state = 0
+
+                -- THE LOCKUP FIX: Do not go to 0! Wait for the C-Core to acknowledge the flip!
+                tenant.wsi_state = 3
+
+            elseif tenant.wsi_state == 3 then
+                -- STATE 3: WAITING_FOR_FLIP_ACK
+                -- Protects the mailbox from being overwritten by a frantic mouse drag
+                if WindowAPI.get_cmd_state(win_id) == 0 then
+                    tenant.wsi_state = 0
+                end
             end
 
             -- [PROCESS LUA-SIDE ZOMBIE GC]
