@@ -280,22 +280,19 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             PFN_vkQueuePresentKHR pfnPresent = (PFN_vkQueuePresentKHR)dev_ctx->vkQueuePresentKHR;
             pfnPresent(dev_ctx->queue, &presentInfo);
 
-        frame_done:
+            /* --- NEW LOCATION: BEFORE frame_done --- */
+            /* We only tick down the zombie lifecycle if the frame successfully reaches the OS! */
             uint32_t current_active_gen = L(g_wsi_generation[wid]);
             uint32_t inactive_idx = (current_active_gen + 1) % 2;
             VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
 
             uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_acquire);
-
-            // Only decrement if we are actively presenting to the NEW swapchain
-            // and the WSI is healthy (w_status == 1).
-            uint32_t w_status = atomic_load_explicit((_Atomic uint32_t*)&win_wsi->status, memory_order_acquire);
-
-            if (z_status > 2 && w_status == 1) {
-                // We successfully waited on a GPU fence for the active swapchain.
-                // This proves the engine is moving forward and the OS is consuming frames.
+            if (z_status > 2) {
                 atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_release);
             }
+
+        frame_done:
+            /* CLEANUP: Only reset the busy flag and increment the frame index here */
             S(g_render_busy[wid], 0);
             t_frame[wid] = (current_frame + 1) % frame_slots;
         }
