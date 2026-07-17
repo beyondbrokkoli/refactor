@@ -230,10 +230,11 @@ static THREAD_FUNC render_thread_loop(void* arg) {
 
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
 
-            // [FIX]: Catch the Windows DWM silly putty scaling!
-            if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
+            // [FIX]: Only abort on OUT_OF_DATE.
+            // If it is SUBOPTIMAL, let it fall through and render so the semaphore isn't leaked!
+            if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
-                SLEEP_MS(10);
+                SLEEP_MS(1);
                 goto frame_done;
             }
 

@@ -412,7 +412,11 @@ local function main()
 
             elseif tenant.wsi_state == 2 then
                 -- STATE 2: BUILDING_WSI (Construct & Flip)
-                local new_w, new_h = tenant.target_w, tenant.target_h
+
+                -- [CRITICAL FIX]: Do NOT use tenant.target_w!
+                -- The OS modal drag loop has just released the C-Core.
+                -- We must fetch the true, final dimensions from the unblocked mailbox!
+                local new_w, new_h = WindowAPI.get_window_size(win_id)
 
                 local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
                 local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
