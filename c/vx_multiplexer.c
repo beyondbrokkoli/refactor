@@ -285,9 +285,16 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             uint32_t inactive_idx = (current_active_gen + 1) % 2;
             VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
 
-            uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
-            if (z_status > 2) {
-                atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_relaxed);
+            uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_acquire);
+
+            // Only decrement if we are actively presenting to the NEW swapchain
+            // and the WSI is healthy (w_status == 1).
+            uint32_t w_status = atomic_load_explicit((_Atomic uint32_t*)&win_wsi->status, memory_order_acquire);
+
+            if (z_status > 2 && w_status == 1) {
+                // We successfully waited on a GPU fence for the active swapchain.
+                // This proves the engine is moving forward and the OS is consuming frames.
+                atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_release);
             }
             S(g_render_busy[wid], 0);
             t_frame[wid] = (current_frame + 1) % frame_slots;
