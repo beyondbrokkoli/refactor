@@ -127,7 +127,13 @@ int main(int argc, char** argv) {
                 uint32_t active_idx = active_gen % 2;
                 uint32_t inactive_idx = (active_gen + 1) % 2;
 
-                atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[id][active_idx].status, 6, memory_order_release);
+                // FIX: Don't count down a ghost that doesn't exist!
+                if (g_wsi_ctx[id][active_idx].swapchain == VK_NULL_HANDLE) {
+                    atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[id][active_idx].status, 0, memory_order_release);
+                } else {
+                    atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[id][active_idx].status, 6, memory_order_release);
+                }
+
                 atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[id][inactive_idx].status, 1, memory_order_release);
 
                 S(g_wsi_generation[id], active_gen + 1);

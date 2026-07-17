@@ -231,6 +231,13 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
+
+                // FAST-TRACK GC: The OS invalidated the surface.
+                // Send the zombie straight to the execution block!
+                uint32_t current_active_gen = L(g_wsi_generation[wid]);
+                uint32_t inactive_idx = (current_active_gen + 1) % 2;
+                atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[wid][inactive_idx].status, 1, memory_order_release);
+
                 SLEEP_MS(10);
                 goto frame_done;
             }
