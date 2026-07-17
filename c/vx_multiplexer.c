@@ -229,7 +229,9 @@ static THREAD_FUNC render_thread_loop(void* arg) {
                 5000000, win_wsi->image_available[current_frame], VK_NULL_HANDLE, &img_idx);
 
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
-            if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+
+            // [FIX]: Catch the Windows DWM silly putty scaling!
+            if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
                 SLEEP_MS(10);
                 goto frame_done;
@@ -298,7 +300,12 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             };
 
             PFN_vkQueuePresentKHR pfnPresent = (PFN_vkQueuePresentKHR)dev_ctx->vkQueuePresentKHR;
-            pfnPresent(dev_ctx->queue, &presentInfo);
+            VkResult p_res = pfnPresent(dev_ctx->queue, &presentInfo);
+
+            // [FIX]: Never ignore the Presentation result!
+            if (p_res == VK_ERROR_OUT_OF_DATE_KHR || p_res == VK_SUBOPTIMAL_KHR) {
+                S(g_engine.mailbox.tenants[wid].window_resized, 1);
+            }
 
         frame_done:
             // [GC FIX]: Removed old wall-clock z_status decrements.
