@@ -30,6 +30,8 @@ M.specs = {
             { type = "VkQueue", name = "queue" },
             { type = "VkQueue", name = "transfer_queue" },
             { type = "uint32_t", name = "max_frames_in_flight" },
+            { type = "uint64_t", name = "cpu_timeline_counter" }, -- FFI-Safe! Cast to _Atomic in C.
+            { type = "uint64_t", name = "timeline_semaphore" },
             { type = "void*", name = "vkWaitForFences" },
             { type = "void*", name = "vkAcquireNextImageKHR" },
             { type = "void*", name = "vkResetFences" },
@@ -51,6 +53,7 @@ M.specs = {
         members = {
             { type = "VkSwapchainKHR", name = "swapchain" },
             { type = "uint32_t", name = "status" }, -- 0 = INACTIVE, 1 = ACTIVE, 2 = RETIRING
+            { type = "uint64_t", name = "target_timeline_value" }, -- FFI-Safe.
             { type = "uint64_t", name = "swapchain_images", count = 10 },
             { type = "uint64_t", name = "swapchain_views", count = 10 },
             { type = "VkSemaphore", name = "image_available", count = 10 },
