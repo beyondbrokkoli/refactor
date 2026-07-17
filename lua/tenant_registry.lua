@@ -69,6 +69,8 @@ function TenantRegistry.boot_tenant(vk_rt, win_id, width, height, frame_slots)
     dev_ctx.vkAcquireNextImageKHR = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkAcquireNextImageKHR"))
     dev_ctx.vkResetFences = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkResetFences"))
     dev_ctx.vkQueueSubmit = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkQueueSubmit"))
+    -- [CRITICAL ADDITION]: Map the timeline counter function pointer!
+    dev_ctx.pfnGetSemaphoreCounterValue = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkGetSemaphoreCounterValue"))
     dev_ctx.vkQueuePresentKHR = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkQueuePresentKHR"))
     dev_ctx.pfnBegin = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkCmdBeginRenderingKHR"))
     dev_ctx.pfnEnd = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkCmdEndRenderingKHR"))
