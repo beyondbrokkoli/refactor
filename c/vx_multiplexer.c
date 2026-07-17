@@ -229,11 +229,9 @@ static THREAD_FUNC render_thread_loop(void* arg) {
                 5000000, win_wsi->image_available[current_frame], VK_NULL_HANDLE, &img_idx);
 
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
-
-            // [FIX]: Only trap OUT_OF_DATE. Let SUBOPTIMAL fall through to avoid infinite loops!
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
-                SLEEP_MS(1);
+                SLEEP_MS(10);
                 goto frame_done;
             }
 
@@ -254,37 +252,17 @@ static THREAD_FUNC render_thread_loop(void* arg) {
 
             VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-            // 1. Grab both semaphores
             VkSemaphore render_finished_sem = win_wsi->render_finished[img_idx];
-            VkSemaphore timeline_sem = (VkSemaphore)(uintptr_t)dev_ctx->timeline_semaphore;
-
-            VkSemaphore signal_sems[2] = { render_finished_sem, timeline_sem };
-
-            // 2. Atomically advance the CPU timeline counter for this generation
-            uint64_t current_timeline = atomic_fetch_add_explicit((_Atomic uint64_t*)&dev_ctx->cpu_timeline_counter, 1, memory_order_release) + 1;
-
-            // 3. Map the timeline values 1:1 with the signal_sems array (0 ignores the binary semaphore)
-            uint64_t signal_values[2] = { 0, current_timeline };
-
-            VkTimelineSemaphoreSubmitInfo timelineInfo = {
-                .sType = 1000207003, // VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO
-                .pNext = NULL,
-                .waitSemaphoreValueCount = 0,
-                .pWaitSemaphoreValues = NULL,
-                .signalSemaphoreValueCount = 2,
-                .pSignalSemaphoreValues = signal_values
-            };
 
             VkSubmitInfo submitInfo = {
                 .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-                .pNext                = &timelineInfo, // <-- Chain the timeline payload
                 .waitSemaphoreCount   = 1,
                 .pWaitSemaphores      = &win_wsi->image_available[current_frame],
                 .pWaitDstStageMask    = &waitStage,
                 .commandBufferCount   = 1,
                 .pCommandBuffers      = &cmd_buf,
-                .signalSemaphoreCount = 2,             // <-- Signal BOTH semaphores
-                .pSignalSemaphores    = signal_sems
+                .signalSemaphoreCount = 1,
+                .pSignalSemaphores    = &render_finished_sem
             };
 
             PFN_vkQueueSubmit pfnSubmit = (PFN_vkQueueSubmit)dev_ctx->vkQueueSubmit;
@@ -300,16 +278,17 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             };
 
             PFN_vkQueuePresentKHR pfnPresent = (PFN_vkQueuePresentKHR)dev_ctx->vkQueuePresentKHR;
-            VkResult p_res = pfnPresent(dev_ctx->queue, &presentInfo);
-
-            // [FIX]: Remove SUBOPTIMAL. Only OUT_OF_DATE is a fatal Vulkan geometry mismatch.
-            if (p_res == VK_ERROR_OUT_OF_DATE_KHR) {
-                S(g_engine.mailbox.tenants[wid].window_resized, 1);
-            }
+            pfnPresent(dev_ctx->queue, &presentInfo);
 
         frame_done:
-            // [GC FIX]: Removed old wall-clock z_status decrements.
-            // The GC Thread now strictly handles Zombie lifecycle via timeline math.
+            uint32_t current_active_gen = L(g_wsi_generation[wid]);
+            uint32_t inactive_idx = (current_active_gen + 1) % 2;
+            VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
+
+            uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
+            if (z_status > 2) {
+                atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_relaxed);
+            }
             S(g_render_busy[wid], 0);
             t_frame[wid] = (current_frame + 1) % frame_slots;
         }

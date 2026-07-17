@@ -16,8 +16,5 @@ void glfw_framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 
 EXPORT int vx_sys_get_resize_state(int win_id) {
     if (win_id < 0 || win_id >= MAX_WINDOWS) return 0;
-
-    // [CRITICAL FIX]: Atomically swap to 0.
-    // If it was 1, Lua gets the 1 and the C-Core resets it, preventing infinite FSM loops.
-    return atomic_exchange_explicit(&g_engine.mailbox.tenants[win_id].window_resized, 0, memory_order_acquire);
+    return atomic_load_explicit(&g_engine.mailbox.tenants[win_id].window_resized, memory_order_acquire);
 }

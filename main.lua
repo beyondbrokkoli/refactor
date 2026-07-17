@@ -381,12 +381,6 @@ local function main()
         total_time = total_time + frame_time
 
         for win_id, tenant in pairs(TenantRegistry.active) do
-            -- [CRITICAL FIX]: Ignore dead/dying tenants BEFORE they hit the WSI logic
-            -- Bypass frame packing entirely for dead/dying tenants
-            if tenant.kill_state or tenant.suspended then
-                goto continue_tenant
-            end
-
             if WindowAPI.is_key_down(win_id, cfg_gfx.key.f5) then
                 ffi.C.vx_sys_dump_ring_state(win_id);
             end
@@ -396,11 +390,8 @@ local function main()
                 -- STATE 0: IDLE (Detect Resize & Fire Command)
                 if WindowAPI.get_resize_state(win_id) then
                     local new_w, new_h = WindowAPI.get_window_size(win_id)
-
-                    -- [CRITICAL FIX]: Drop the strict mismatch check.
-                    -- If the flag is set, Vulkan or the OS DEMANDS a rebuild.
-                    if new_w > 0 and new_h > 0 then
-                        print(string.format("[LUA FSM] Tenant %d: Resize mandated. Firing CMD 4...", win_id))
+                    if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
+                        print(string.format("[LUA FSM] Tenant %d: Resize detected. Firing CMD 4...", win_id))
 
                         tenant.target_w = new_w
                         tenant.target_h = new_h
@@ -418,11 +409,7 @@ local function main()
 
             elseif tenant.wsi_state == 2 then
                 -- STATE 2: BUILDING_WSI (Construct & Flip)
-
-                -- [CRITICAL FIX]: Do NOT use tenant.target_w!
-                -- The OS modal drag loop has just released the C-Core.
-                -- We must fetch the true, final dimensions from the unblocked mailbox!
-                local new_w, new_h = WindowAPI.get_window_size(win_id)
+                local new_w, new_h = tenant.target_w, tenant.target_h
 
                 local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
                 local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
@@ -434,22 +421,7 @@ local function main()
                 local graphics_mod = require("graphics_pipeline")
                 local renderer_mod = require("renderer")
 
-                -- just for absolute paranoia
-                local old_sc_handle = tenant.sc and tenant.sc.handle or nil
-
-                -- [CRITICAL FIX]: Tag the CURRENT ACTIVE swapchain as RETIRING.
-                -- After the flip, this slot becomes the "inactive" zombie that the GC monitors.
-                local active_wsi_ptr = ffi.C.vx_sys_get_active_wsi_slot(win_id)
-                if active_wsi_ptr ~= nil then
-                    local active_wsi = ffi.cast("VulkanSwapchainContext*", active_wsi_ptr)
-
-                    -- Read current CPU counter and add a +3 frame safety margin.
-                    -- This mathematically guarantees the GPU has fully executed all work
-                    -- submitted with the old swapchain before the C-Core attempts destruction.
-                    local current_timeline = ffi.C.vx_sys_get_timeline_counter(win_id)
-                    active_wsi.target_timeline_value = current_timeline + 3
-                    active_wsi.status = 2 -- Mark as RETIRING
-                end
+                local old_sc_handle = tenant.sc.handle
 
                 -- [QUEUE LUA GARBAGE]
                 if not tenant.zombies then tenant.zombies = {} end
@@ -582,6 +554,11 @@ local function main()
                 end
             end
 
+            -- Bypass frame packing entirely for dead/dying tenants
+            if tenant.kill_state or tenant.suspended then
+                goto continue_tenant
+            end
+
             if win_id == active_win_id then
                 local mouse_x, mouse_y = WindowAPI.get_mouse_pos(win_id)
                 camera_mod.update(tenant.cam, frame_time, mouse_x, mouse_y, tenant.width, tenant.height, win_id)
@@ -657,11 +634,6 @@ local function main()
         if tenant.gfx then graphics_mod.Destroy(vk_rt.vk, vk_rt, tenant.gfx) end
         if tenant.sync then renderer_mod.Destroy(vk_rt.vk, vk_rt.device, tenant.sync) end
         if tenant.sc then swapchain_mod.Destroy(vk_rt.vk, vk_rt, tenant.sc) end
-
-        -- [NEW] Destroy the per-tenant timeline semaphore
-        if tenant.timeline_semaphore then
-            vk_rt.vk.vkDestroySemaphore(vk_rt.device, tenant.timeline_semaphore, nil)
-        end
 
         local surface_ptr = WindowAPI.get_surface(win_id)
         if surface_ptr ~= nil then

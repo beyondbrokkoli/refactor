@@ -124,19 +124,11 @@ int main(int argc, char** argv) {
             }
             else if (cmd == CMD_FLIP_WSI) {
                 uint32_t active_gen = L(g_wsi_generation[id]);
+                uint32_t active_idx = active_gen % 2;
+                uint32_t inactive_idx = (active_gen + 1) % 2;
 
-                // [GC FIX]: Removed the hardcoded status = 120 overwrite!
-                // Lua now explicitly tags the old slot as 2 (RETIRING) and the new slot as 1 (ACTIVE).
-
-                S(g_wsi_generation[id], active_gen + 1);
-
-                S(g_engine.mailbox.tenants[id].glfw_cmd, CMD_IDLE);
-                printf("[C-CORE] Tenant %d: Asynchronous WSI Flip Executed! (New Gen: %d)\n", id, active_gen + 1);
-            }else if (cmd == CMD_FLIP_WSI) {
-                uint32_t active_gen = L(g_wsi_generation[id]);
-
-                // [GC FIX]: Removed the hardcoded status = 120 overwrite!
-                // Lua now explicitly tags the old slot as 2 (RETIRING) and the new slot as 1 (ACTIVE).
+                atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[id][active_idx].status, 120, memory_order_release);
+                atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[id][inactive_idx].status, 1, memory_order_release);
 
                 S(g_wsi_generation[id], active_gen + 1);
 
