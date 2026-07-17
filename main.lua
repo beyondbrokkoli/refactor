@@ -381,6 +381,12 @@ local function main()
         total_time = total_time + frame_time
 
         for win_id, tenant in pairs(TenantRegistry.active) do
+            -- [CRITICAL FIX]: Ignore dead/dying tenants BEFORE they hit the WSI logic
+            -- Bypass frame packing entirely for dead/dying tenants
+            if tenant.kill_state or tenant.suspended then
+                goto continue_tenant
+            end
+
             if WindowAPI.is_key_down(win_id, cfg_gfx.key.f5) then
                 ffi.C.vx_sys_dump_ring_state(win_id);
             end
@@ -428,7 +434,8 @@ local function main()
                 local graphics_mod = require("graphics_pipeline")
                 local renderer_mod = require("renderer")
 
-                local old_sc_handle = tenant.sc.handle
+                -- just for absolute paranoia
+                local old_sc_handle = tenant.sc and tenant.sc.handle or nil
 
                 -- [CRITICAL FIX]: Tag the CURRENT ACTIVE swapchain as RETIRING.
                 -- After the flip, this slot becomes the "inactive" zombie that the GC monitors.
@@ -573,11 +580,6 @@ local function main()
                 if TenantRegistry.active[win_id] then
                     tenant.teardown_zombies = survivor_teardowns
                 end
-            end
-
-            -- Bypass frame packing entirely for dead/dying tenants
-            if tenant.kill_state or tenant.suspended then
-                goto continue_tenant
             end
 
             if win_id == active_win_id then

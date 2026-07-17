@@ -230,8 +230,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
 
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
 
-            // [FIX]: Only abort on OUT_OF_DATE.
-            // If it is SUBOPTIMAL, let it fall through and render so the semaphore isn't leaked!
+            // [FIX]: Only trap OUT_OF_DATE. Let SUBOPTIMAL fall through to avoid infinite loops!
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
                 SLEEP_MS(1);
@@ -303,8 +302,8 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             PFN_vkQueuePresentKHR pfnPresent = (PFN_vkQueuePresentKHR)dev_ctx->vkQueuePresentKHR;
             VkResult p_res = pfnPresent(dev_ctx->queue, &presentInfo);
 
-            // [FIX]: Never ignore the Presentation result!
-            if (p_res == VK_ERROR_OUT_OF_DATE_KHR || p_res == VK_SUBOPTIMAL_KHR) {
+            // [FIX]: Remove SUBOPTIMAL. Only OUT_OF_DATE is a fatal Vulkan geometry mismatch.
+            if (p_res == VK_ERROR_OUT_OF_DATE_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
             }
 
