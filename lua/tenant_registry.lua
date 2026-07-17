@@ -44,6 +44,26 @@ function TenantRegistry.boot_tenant(vk_rt, win_id, width, height, frame_slots)
     dev_ctx.transfer_queue = vk_rt.transferQueue
     dev_ctx.max_frames_in_flight = sc.imageCount
 
+    -- [NEW] Timeline Semaphore Initialization for this Tenant
+    local type_info = ffi.new("VkSemaphoreTypeCreateInfo")
+    ffi.fill(type_info, ffi.sizeof(type_info))
+    type_info.sType = 1000207002 -- VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO
+    type_info.semaphoreType = 1  -- VK_SEMAPHORE_TYPE_TIMELINE
+    type_info.initialValue = 0
+
+    local create_info = ffi.new("VkSemaphoreCreateInfo")
+    ffi.fill(create_info, ffi.sizeof(create_info))
+    create_info.sType = 9 -- VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+    create_info.pNext = type_info
+    create_info.flags = 0
+
+    local timeline_sem = ffi.new("VkSemaphore[1]")
+    assert(vk_rt.vk.vkCreateSemaphore(vk_rt.device, create_info, nil, timeline_sem) == 0, "FATAL: Failed to create Timeline Semaphore!")
+
+    -- Map to Context (FFI-Safe uint64_t cast)
+    dev_ctx.timeline_semaphore = ffi.cast("uint64_t", timeline_sem[0])
+    dev_ctx.cpu_timeline_counter = 0 -- Explicitly initialize to 0
+
     local vk, dev = vk_rt.vk, vk_rt.device
     dev_ctx.vkWaitForFences = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkWaitForFences"))
     dev_ctx.vkAcquireNextImageKHR = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkAcquireNextImageKHR"))
@@ -105,8 +125,7 @@ function TenantRegistry.boot_tenant(vk_rt, win_id, width, height, frame_slots)
         cam = camera_mod.new(),
         pc = ffi.new("PushConstants"),
         inv_vp = ffi.new("mat4_t"),
-
-        -- 🚨 CRITICAL: Must align with the C-Core's initial flip!
+        timeline_semaphore = timeline_sem[0], -- [NEW] Store handle for clean teardown
         generation = next_gen,
         wsi_state = 0,
         zombies = {}

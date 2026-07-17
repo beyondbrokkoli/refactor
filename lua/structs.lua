@@ -32,6 +32,7 @@ M.specs = {
             { type = "uint32_t", name = "max_frames_in_flight" },
             { type = "uint64_t", name = "cpu_timeline_counter" }, -- FFI-Safe! Cast to _Atomic in C.
             { type = "uint64_t", name = "timeline_semaphore" },
+            { type = "void*", name = "pfnGetSemaphoreCounterValue" }, -- <-- ADD THIS
             { type = "void*", name = "vkWaitForFences" },
             { type = "void*", name = "vkAcquireNextImageKHR" },
             { type = "void*", name = "vkResetFences" },

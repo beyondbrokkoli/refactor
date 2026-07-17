@@ -25,6 +25,9 @@ typedef struct  {
     VkQueue transfer_queue;
     uint32_t max_frames_in_flight;
     uint8_t _pad_auto_0[4];
+    uint64_t cpu_timeline_counter;
+    uint64_t timeline_semaphore;
+    void* pfnGetSemaphoreCounterValue;
     void* vkWaitForFences;
     void* vkAcquireNextImageKHR;
     void* vkResetFences;
@@ -47,6 +50,7 @@ typedef struct  {
     VkSwapchainKHR swapchain;
     uint32_t status;
     uint8_t _pad_auto_0[4];
+    uint64_t target_timeline_value;
     uint64_t swapchain_images[10];
     uint64_t swapchain_views[10];
     VkSemaphore image_available[10];

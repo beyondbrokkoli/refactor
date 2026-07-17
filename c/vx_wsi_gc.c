@@ -15,8 +15,13 @@ EXPORT void vx_pump_zombie_gc(void) {
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
             uint64_t current_gpu_value = 0;
 
-            // NOTE: Cast this to your dynamic PFN if you don't have Vulkan 1.2 linked statically
-            VkResult res = vkGetSemaphoreCounterValue(dev_ctx->device, (VkSemaphore)dev_ctx->timeline_semaphore, &current_gpu_value);
+            // Use the dynamic pointer passed from Lua
+            PFN_vkGetSemaphoreCounterValue pfnGetCounter = (PFN_vkGetSemaphoreCounterValue)dev_ctx->pfnGetSemaphoreCounterValue;
+
+            VkResult res = VK_ERROR_UNKNOWN;
+            if (pfnGetCounter) {
+                res = pfnGetCounter(dev_ctx->device, (VkSemaphore)dev_ctx->timeline_semaphore, &current_gpu_value);
+            }
 
             if (res == VK_SUCCESS && current_gpu_value >= zombie->target_timeline_value) {
 

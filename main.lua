@@ -423,6 +423,20 @@ local function main()
 
                 local old_sc_handle = tenant.sc.handle
 
+                -- [CRITICAL FIX]: Tag the CURRENT ACTIVE swapchain as RETIRING.
+                -- After the flip, this slot becomes the "inactive" zombie that the GC monitors.
+                local active_wsi_ptr = ffi.C.vx_sys_get_active_wsi_slot(win_id)
+                if active_wsi_ptr ~= nil then
+                    local active_wsi = ffi.cast("VulkanSwapchainContext*", active_wsi_ptr)
+
+                    -- Read current CPU counter and add a +3 frame safety margin.
+                    -- This mathematically guarantees the GPU has fully executed all work
+                    -- submitted with the old swapchain before the C-Core attempts destruction.
+                    local current_timeline = ffi.C.vx_sys_get_timeline_counter(win_id)
+                    active_wsi.target_timeline_value = current_timeline + 3
+                    active_wsi.status = 2 -- Mark as RETIRING
+                end
+
                 -- [QUEUE LUA GARBAGE]
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
@@ -634,6 +648,11 @@ local function main()
         if tenant.gfx then graphics_mod.Destroy(vk_rt.vk, vk_rt, tenant.gfx) end
         if tenant.sync then renderer_mod.Destroy(vk_rt.vk, vk_rt.device, tenant.sync) end
         if tenant.sc then swapchain_mod.Destroy(vk_rt.vk, vk_rt, tenant.sc) end
+
+        -- [NEW] Destroy the per-tenant timeline semaphore
+        if tenant.timeline_semaphore then
+            vk_rt.vk.vkDestroySemaphore(vk_rt.device, tenant.timeline_semaphore, nil)
+        end
 
         local surface_ptr = WindowAPI.get_surface(win_id)
         if surface_ptr ~= nil then
