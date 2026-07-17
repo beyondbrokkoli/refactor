@@ -48,7 +48,7 @@ function Renderer.Destroy(vk, device, sync)
     for i = 0, sync.safe_frames - 1 do
         vk.vkDestroySemaphore(device, sync.imageAvailable[i], nil)
         vk.vkDestroySemaphore(device, sync.renderFinished[i], nil)
---        vk.vkDestroyFence(device, sync.inFlight[i], nil)
+        vk.vkDestroyFence(device, sync.inFlight[i], nil)
     end
 end
 

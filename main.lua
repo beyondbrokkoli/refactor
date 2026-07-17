@@ -388,14 +388,10 @@ local function main()
             -- [ZOMBIE PROTOCOL: ASYNC RESIZE STATE MACHINE]
             if tenant.wsi_state == 0 then
                 -- STATE 0: IDLE (Detect Resize & Fire Command)
-                -- THE FIX: Explicitly check == 1 because 0 is Truthy in Lua!
-                if WindowAPI.get_resize_state(win_id) == 1 then
+                if WindowAPI.get_resize_state(win_id) then
                     local new_w, new_h = WindowAPI.get_window_size(win_id)
-
-                    -- We drop the strict dimension mismatch check.
-                    -- If the flag is 1, the OS or Vulkan DEMANDS a rebuild.
-                    if new_w > 0 and new_h > 0 then
-                        print(string.format("[LUA FSM] Tenant %d: Resize explicitly flagged. Firing CMD 4...", win_id))
+                    if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
+                        print(string.format("[LUA FSM] Tenant %d: Resize detected. Firing CMD 4...", win_id))
 
                         tenant.target_w = new_w
                         tenant.target_h = new_h
@@ -425,8 +421,7 @@ local function main()
                 local graphics_mod = require("graphics_pipeline")
                 local renderer_mod = require("renderer")
 
-                -- SAFEGUARD: Prevent Lua nil-index crash if a previous swapchain build failed
-                local old_sc_handle = tenant.sc and tenant.sc.handle or nil
+                local old_sc_handle = tenant.sc.handle
 
                 -- [QUEUE LUA GARBAGE]
                 if not tenant.zombies then tenant.zombies = {} end
@@ -457,21 +452,17 @@ local function main()
                 inactive_wsi.swapchain = tenant.sc.handle
                 inactive_wsi.status = 1 -- ACTIVE
 
-                -- 1. Map the Physical Hardware Images
-                local max_images = math.min(tenant.sc.imageCount, 10)
-                for i = 0, max_images - 1 do
-                    inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
-                    inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
-                end
+               local max_images = math.min(tenant.sc.imageCount, 10) -- Protect the C-struct bounds
 
-                -- 2. THE FIX: Map the Logical CPU Sync Primitives independently!
-                -- This guarantees the C-Core never hits a NULL fence, even if imageCount drops to 2.
-                local max_sync = math.min(tenant.sync.safe_frames, 10)
-                for i = 0, max_sync - 1 do
-                    inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
-                    inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
-                    inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
-                end
+               for i = 0, max_images - 1 do
+                   inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
+                   inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
+
+                   -- Removed the hardcoded 'if i < 3' limit.
+                   inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
+                   inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
+                   inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
+               end
 
                 -- NEW FIX: Sync the Lua tenant state to the true hardware dimensions
                 tenant.width = final_w
@@ -481,28 +472,23 @@ local function main()
                 -- [THE FLIP]
                 WindowAPI.flip_wsi(win_id)
                 print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
-
-                -- THE LOCKUP FIX: Do not go to 0! Wait for the C-Core to acknowledge the flip!
-                tenant.wsi_state = 3
-
-            elseif tenant.wsi_state == 3 then
-                -- STATE 3: WAITING_FOR_FLIP_ACK
-                -- Protects the mailbox from being overwritten by a frantic mouse drag
-                if WindowAPI.get_cmd_state(win_id) == 0 then
-                    tenant.wsi_state = 0
-                end
+                tenant.wsi_state = 0
             end
 
             -- [PROCESS LUA-SIDE ZOMBIE GC]
             if tenant.zombies and #tenant.zombies > 0 then
                 local survivor_zombies = {}
                 for _, z in ipairs(tenant.zombies) do
-                    -- Lua ONLY manages the Logical Pipeline (gfx) now.
+                    -- THE FIX: Check elapsed real time instead of simulation ticks
                     if total_time - z.time_added > 1.0 then
                         require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx)
 
-                        -- DELETED: Fence destruction.
-                        -- The C-Core is now destroying the sync primitives safely!
+                        -- [FIX]: C-Core destroys the semaphores, so we MUST ONLY destroy the fences!
+                        if z.sync then
+                            for i = 0, z.sync.safe_frames - 1 do
+                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
+                            end
+                        end
                     else
                         table.insert(survivor_zombies, z)
                     end

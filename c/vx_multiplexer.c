@@ -197,41 +197,27 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
             VulkanSwapchainContext* win_wsi = &g_wsi_ctx[wid][active_idx];
 
-            // 1. CHECK STATUS FIRST to ensure we don't touch a dead WSI
-            uint32_t w_status = atomic_load_explicit((_Atomic uint32_t*)&win_wsi->status, memory_order_acquire);
-
-            if (win_wsi->swapchain == VK_NULL_HANDLE || L(g_wsi_state[wid]) == 0 ||
-                p->width == 0 || p->height == 0 || w_status != 1) {
-
-                // [THE TRUE FIX]: Free the current slot...
-                FA(g_ring.locked_mask, ~(1u << read_idx));
-
-                // ...AND flush all trapped zombie slots back to Lua!
-                for (int f = 0; f < 10; f++) {
-                    int trapped = g_ring.active_ring_slots[wid][f];
-                    if (trapped != -1) {
-                        FA(g_ring.locked_mask, ~(1u << trapped));
-                        g_ring.active_ring_slots[wid][f] = -1;
-                    }
-                }
-                goto frame_done;
-            }
-
             uint32_t frame_slots = dev_ctx->max_frames_in_flight > 0 ? dev_ctx->max_frames_in_flight : 3;
             if (frame_slots > 3) frame_slots = 3;
             uint32_t current_frame = t_frame[wid] % frame_slots;
 
-            // 2. THE GOLDEN FIX: Use the generation-specific fence passed from Lua!
-            VkFence active_fence = (VkFence)win_wsi->in_flight[current_frame];
-            if (active_fence == VK_NULL_HANDLE) {
-                FA(g_ring.locked_mask, ~(1u << read_idx));
+            VkFence immortal_fence = g_render_fences[wid][current_frame];
+            PFN_vkWaitForFences pfnWait = (PFN_vkWaitForFences)dev_ctx->vkWaitForFences;
+            if (pfnWait(dev_ctx->device, 1, &immortal_fence, VK_TRUE, 2000000000) == VK_TIMEOUT) {
+                printf("[C-WARN] Tenant %d: GPU Fence Timeout (CPU Starvation).\n", wid);
                 goto frame_done;
             }
 
-            PFN_vkWaitForFences pfnWait = (PFN_vkWaitForFences)dev_ctx->vkWaitForFences;
-            if (pfnWait(dev_ctx->device, 1, &active_fence, VK_TRUE, 2000000000) == VK_TIMEOUT) {
-                printf("[C-WARN] Tenant %d: GPU Fence Timeout (CPU Starvation).\n", wid);
-                FA(g_ring.locked_mask, ~(1u << read_idx)); // Prevent lock leak
+            int finished_slot = g_ring.active_ring_slots[wid][current_frame];
+            if (finished_slot != -1 && finished_slot != read_idx) {
+                FA(g_ring.locked_mask, ~(1u << finished_slot));
+            }
+            g_ring.active_ring_slots[wid][current_frame] = read_idx;
+
+            uint32_t w_status = atomic_load_explicit((_Atomic uint32_t*)&win_wsi->status, memory_order_acquire);
+
+            if (win_wsi->swapchain == VK_NULL_HANDLE || L(g_wsi_state[wid]) == 0 ||
+                p->width == 0 || p->height == 0 || w_status != 1) {
                 goto frame_done;
             }
 
@@ -242,32 +228,20 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             VkResult res = pfnAcquire(dev_ctx->device, win_wsi->swapchain,
                 5000000, win_wsi->image_available[current_frame], VK_NULL_HANDLE, &img_idx);
 
-            // [THE FIX]: If we abort here, we MUST unlock the slot to prevent a ring buffer leak!
-            if (res == VK_TIMEOUT || res == VK_NOT_READY) {
-                FA(g_ring.locked_mask, ~(1u << read_idx));
-                goto frame_done;
-            }
+            if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
-                atomic_store_explicit(&g_engine.mailbox.tenants[wid].window_resized, 1, memory_order_release);
-                FA(g_ring.locked_mask, ~(1u << read_idx));
-                SLEEP_MS(1);
+                S(g_engine.mailbox.tenants[wid].window_resized, 1);
+                SLEEP_MS(10);
                 goto frame_done;
             }
-
-            // [THE FIX]: Only commit to the active ring slot AFTER we know we have a valid image
-            int finished_slot = g_ring.active_ring_slots[wid][current_frame];
-            if (finished_slot != -1 && finished_slot != read_idx) {
-                FA(g_ring.locked_mask, ~(1u << finished_slot));
-            }
-            g_ring.active_ring_slots[wid][current_frame] = read_idx;
 
             if (win_wsi->images_in_flight_fences[img_idx] != VK_NULL_HANDLE) {
                 pfnWait(dev_ctx->device, 1, &win_wsi->images_in_flight_fences[img_idx], VK_TRUE, 2000000000);
             }
-            win_wsi->images_in_flight_fences[img_idx] = active_fence; // <-- Updated
+            win_wsi->images_in_flight_fences[img_idx] = immortal_fence;
 
             PFN_vkResetFences pfnReset = (PFN_vkResetFences)dev_ctx->vkResetFences;
-            pfnReset(dev_ctx->device, 1, &active_fence); // <-- Updated
+            pfnReset(dev_ctx->device, 1, &immortal_fence);
 
             uint64_t local_image = win_wsi->swapchain_images[img_idx];
             uint64_t local_view  = win_wsi->swapchain_views[img_idx];
@@ -292,7 +266,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             };
 
             PFN_vkQueueSubmit pfnSubmit = (PFN_vkQueueSubmit)dev_ctx->vkQueueSubmit;
-            pfnSubmit(dev_ctx->queue, 1, &submitInfo, active_fence); // <-- Updated
+            pfnSubmit(dev_ctx->queue, 1, &submitInfo, immortal_fence);
 
             VkPresentInfoKHR presentInfo = {
                 .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -307,8 +281,14 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             pfnPresent(dev_ctx->queue, &presentInfo);
 
         frame_done:
-            // DELETED the old z_status > 2 decrementing logic.
-            // The GC Thread exclusively owns the zombie lifecycle now.
+            uint32_t current_active_gen = L(g_wsi_generation[wid]);
+            uint32_t inactive_idx = (current_active_gen + 1) % 2;
+            VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
+
+            uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
+            if (z_status > 2) {
+                atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_relaxed);
+            }
             S(g_render_busy[wid], 0);
             t_frame[wid] = (current_frame + 1) % frame_slots;
         }
