@@ -11,7 +11,7 @@ EXPORT void vx_pump_zombie_gc(void) {
         VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
         uint32_t status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
 
-        if (status == 2) {
+        if (status == 1) {
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
 
             for (int i = 0; i < 10; i++) {
