@@ -457,17 +457,21 @@ local function main()
                 inactive_wsi.swapchain = tenant.sc.handle
                 inactive_wsi.status = 1 -- ACTIVE
 
-               local max_images = math.min(tenant.sc.imageCount, 10) -- Protect the C-struct bounds
+                -- 1. Map the Physical Hardware Images
+                local max_images = math.min(tenant.sc.imageCount, 10)
+                for i = 0, max_images - 1 do
+                    inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
+                    inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
+                end
 
-               for i = 0, max_images - 1 do
-                   inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
-                   inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
-
-                   -- Removed the hardcoded 'if i < 3' limit.
-                   inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
-                   inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
-                   inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
-               end
+                -- 2. THE FIX: Map the Logical CPU Sync Primitives independently!
+                -- This guarantees the C-Core never hits a NULL fence, even if imageCount drops to 2.
+                local max_sync = math.min(tenant.sync.safe_frames, 10)
+                for i = 0, max_sync - 1 do
+                    inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
+                    inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
+                    inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
+                end
 
                 -- NEW FIX: Sync the Lua tenant state to the true hardware dimensions
                 tenant.width = final_w

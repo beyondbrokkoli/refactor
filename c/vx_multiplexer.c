@@ -203,9 +203,17 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             if (win_wsi->swapchain == VK_NULL_HANDLE || L(g_wsi_state[wid]) == 0 ||
                 p->width == 0 || p->height == 0 || w_status != 1) {
 
-                // [THE FIX]: If we abort, this packet is never sent to the GPU.
-                // We MUST instantly release the lock to prevent a Ring Buffer Deadlock!
+                // [THE TRUE FIX]: Free the current slot...
                 FA(g_ring.locked_mask, ~(1u << read_idx));
+
+                // ...AND flush all trapped zombie slots back to Lua!
+                for (int f = 0; f < 10; f++) {
+                    int trapped = g_ring.active_ring_slots[wid][f];
+                    if (trapped != -1) {
+                        FA(g_ring.locked_mask, ~(1u << trapped));
+                        g_ring.active_ring_slots[wid][f] = -1;
+                    }
+                }
                 goto frame_done;
             }
 
@@ -216,7 +224,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             // 2. THE GOLDEN FIX: Use the generation-specific fence passed from Lua!
             VkFence active_fence = (VkFence)win_wsi->in_flight[current_frame];
             if (active_fence == VK_NULL_HANDLE) {
-                FA(g_ring.locked_mask, ~(1u << read_idx)); // Prevent lock leak
+                FA(g_ring.locked_mask, ~(1u << read_idx));
                 goto frame_done;
             }
 
