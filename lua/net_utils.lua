@@ -244,7 +244,9 @@ function NetUtils.BootstrapNetworkTopology(local_port, my_local_ip)
     end
 
     net.SetRelayIP(cfg_net.RELAY_IP)
-    net.Connect(cfg_net.MAX_PLAYERS, cfg_net.RELAY_IP, cfg_net.RELAY_PORT)
+    local RELAY_NODE_ID = cfg_net.MAX_PLAYERS - 1
+    net.Connect(RELAY_NODE_ID, cfg_net.RELAY_IP, cfg_net.RELAY_PORT)
+    -- net.Connect(cfg_net.MAX_PLAYERS, cfg_net.RELAY_IP, cfg_net.RELAY_PORT)
 
     local reg_pkt = ffi.new("IcePunchPacket")
     reg_pkt.session_token = session_token
