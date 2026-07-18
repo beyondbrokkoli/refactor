@@ -244,8 +244,12 @@ function NetUtils.BootstrapNetworkTopology(local_port, my_local_ip)
             else
                 print(string.format("[ROUTING] Node %d -> P2P [FAILED]. Tagged for Omnibus Relay.", peer_id))
 
-                -- [!] THE FIX: Overwrite the dead WAN IP in the C struct with the Relay IP!
+                -- 1. Overwrite the dead WAN IP with the Relay IP
                 net.Connect(peer_id, cfg_net.RELAY_IP, cfg_net.RELAY_PORT)
+
+                -- 2. THE JEDI MIND TRICK: Lie to the game engine!
+                -- Force it to use the hijacked peer slot instead of the dead Slot 8.
+                p2p_established[peer_id] = true
 
                 needs_relay = true
                 fallback_peer = peer_id
@@ -255,8 +259,7 @@ function NetUtils.BootstrapNetworkTopology(local_port, my_local_ip)
 
     net.SetRelayIP(cfg_net.RELAY_IP)
 
-    -- Wake up the Python Relay. We must send at least one valid packet so it logs our IP.
-    -- Instead of overflowing the C-array with MAX_PLAYERS (8), we hijack the failed peer's slot.
+    -- Send the Wake-Up packet to punch the NAT and register our IP with the Python Relay
     if needs_relay then
         local reg_pkt = ffi.new("IcePunchPacket")
         reg_pkt.session_token = session_token
