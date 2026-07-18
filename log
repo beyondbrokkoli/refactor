@@ -1,1 +1,16 @@
-[C-CORE] Tenant 3: Zombie Swapchain safelySegmentation fault         bin/boot.exe
+
+[HEARTBEAT] Sim Tick: 7411 | Confirmed: 7409 | Accum: 0.0150
+  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 0 | AckOfMe: 0
+  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 7420 | AckOfMe: 7399
+[INPUT] Window 3 clicked tile 31857
+[LUA CO] Intercepted close request for Tenant 3. Initiating Zombie Teardown V2...
+[C-CORE] Tenant 3: Lock-Free Teardown Initiated. Render thread severed.
+[LUA FSM] Tenant 3: Memory zeroed. Transitioning to Build phase...
+
+[LUA FATAL ERROR] main.lua:431: attempt to index field 'sc' (a nil value)
+
+[C-CORE] Shutdown triggered. Waiting for Lua VM...
+[C-CORE] Async Render Multiplexer gracefully terminated.
+[C-CORE] Async Transfer Thread gracefully terminated.
+[LUA-OS-THREAD] VM Destroyed.
+

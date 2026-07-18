@@ -231,13 +231,6 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
-
-                // FAST-TRACK GC: The OS invalidated the surface.
-                // Send the zombie straight to the execution block!
-                uint32_t current_active_gen = L(g_wsi_generation[wid]);
-                uint32_t inactive_idx = (current_active_gen + 1) % 2;
-                atomic_store_explicit((_Atomic uint32_t*)&g_wsi_ctx[wid][inactive_idx].status, 1, memory_order_release);
-
                 SLEEP_MS(10);
                 goto frame_done;
             }
@@ -287,19 +280,15 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             PFN_vkQueuePresentKHR pfnPresent = (PFN_vkQueuePresentKHR)dev_ctx->vkQueuePresentKHR;
             pfnPresent(dev_ctx->queue, &presentInfo);
 
-            /* --- NEW LOCATION: BEFORE frame_done --- */
-            /* We only tick down the zombie lifecycle if the frame successfully reaches the OS! */
+        frame_done:
             uint32_t current_active_gen = L(g_wsi_generation[wid]);
             uint32_t inactive_idx = (current_active_gen + 1) % 2;
             VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
 
-            uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_acquire);
-            if (z_status > 1) {
-                atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_release);
+            uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
+            if (z_status > 2) {
+                atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_relaxed);
             }
-
-        frame_done:
-            /* CLEANUP: Only reset the busy flag and increment the frame index here */
             S(g_render_busy[wid], 0);
             t_frame[wid] = (current_frame + 1) % frame_slots;
         }
