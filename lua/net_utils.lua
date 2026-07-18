@@ -233,28 +233,40 @@ function NetUtils.BootstrapNetworkTopology(local_port, my_local_ip)
     end
 
     print("[ICE] Sync window closed. Evaluating routing topologies...")
+
+    local needs_relay = false
+    local fallback_peer = 0
+
     for peer_id, active in pairs(active_peers) do
         if active then
             if p2p_established[peer_id] then
                 print(string.format("[ROUTING] Node %d -> P2P [DIRECT RESIDENTIAL]", peer_id))
             else
                 print(string.format("[ROUTING] Node %d -> P2P [FAILED]. Tagged for Omnibus Relay.", peer_id))
+
+                -- [!] THE FIX: Overwrite the dead WAN IP in the C struct with the Relay IP!
+                net.Connect(peer_id, cfg_net.RELAY_IP, cfg_net.RELAY_PORT)
+
+                needs_relay = true
+                fallback_peer = peer_id
             end
         end
     end
 
     net.SetRelayIP(cfg_net.RELAY_IP)
-    local RELAY_NODE_ID = cfg_net.MAX_PLAYERS - 1
-    net.Connect(RELAY_NODE_ID, cfg_net.RELAY_IP, cfg_net.RELAY_PORT)
-    -- net.Connect(cfg_net.MAX_PLAYERS, cfg_net.RELAY_IP, cfg_net.RELAY_PORT)
 
-    local reg_pkt = ffi.new("IcePunchPacket")
-    reg_pkt.session_token = session_token
-    reg_pkt.player_id = local_id
-    reg_pkt.is_ping = 0
+    -- Wake up the Python Relay. We must send at least one valid packet so it logs our IP.
+    -- Instead of overflowing the C-array with MAX_PLAYERS (8), we hijack the failed peer's slot.
+    if needs_relay then
+        local reg_pkt = ffi.new("IcePunchPacket")
+        reg_pkt.session_token = session_token
+        reg_pkt.player_id = local_id
+        reg_pkt.is_ping = 0
 
-    local ice_packet_size = ffi.sizeof("IcePunchPacket")
-    net.SendTo(reg_pkt, ice_packet_size, cfg_net.MAX_PLAYERS)
+        local ice_packet_size = ffi.sizeof("IcePunchPacket")
+        net.SendTo(reg_pkt, ice_packet_size, fallback_peer)
+        print("[SYSTEM] Sent Relay wake-up sequence.")
+    end
 
     print("[SYSTEM] All routes bound. Drop-in complete.")
     return session_token, local_id, p2p_established, active_peers, status_data
