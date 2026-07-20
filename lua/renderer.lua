@@ -7,8 +7,9 @@ local Renderer = {}
 function Renderer.InitSync(vk, device, frames_in_flight)
     print("[RENDERER] Forging Synchronization Primitives...")
 
-    -- [ARMOR PATCH]: Force a minimum of 3 primitives to survive the C-Core % 3 hardcode.
-    local safe_frames = math.max(3, frames_in_flight)
+    -- [THE MATRIX EXPANSION]: Force 10 primitives to perfectly fill the SSoT array
+    -- and feed the C-Core floating semaphore pool.
+    local safe_frames = 10
 
     local imageAvailable = ffi.new("VkSemaphore[?]", safe_frames)
     local renderFinished = ffi.new("VkSemaphore[?]", safe_frames)
@@ -20,7 +21,7 @@ function Renderer.InitSync(vk, device, frames_in_flight)
         flags = 1 -- VK_FENCE_CREATE_SIGNALED_BIT
     })
 
-    -- Initialize the full padded length
+    -- Initialize the full padded length (0 through 9)
     for i = 0, safe_frames - 1 do
         assert(vk.vkCreateSemaphore(device, semInfo, nil, imageAvailable + i) == 0)
         assert(vk.vkCreateSemaphore(device, semInfo, nil, renderFinished + i) == 0)
@@ -31,8 +32,7 @@ function Renderer.InitSync(vk, device, frames_in_flight)
         imageAvailable = imageAvailable,
         renderFinished = renderFinished,
         inFlight = inFlight,
-        -- Pass safe_frames back so Destroy() cleans up the padded handles correctly
-        safe_frames = safe_frames
+        safe_frames = safe_frames -- GC will read '10' and clean up flawlessly
     }
 end
 

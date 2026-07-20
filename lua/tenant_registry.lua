@@ -82,9 +82,14 @@ function TenantRegistry.boot_tenant(vk_rt, win_id, width, height, frame_slots)
     dormant_wsi.swapchain = sc.handle
     dormant_wsi.status = 1 -- 1 = ACTIVE
 
+    -- 1. Map the Physical Images (Usually 3)
     for i = 0, sc.imageCount - 1 do
         dormant_wsi.swapchain_images[i] = ffi.cast("uint64_t", sc.images[i])
         dormant_wsi.swapchain_views[i]  = ffi.cast("uint64_t", sc.imageViews[i])
+    end
+
+    -- 2. Map the Sync Primitives (Always 10 to feed the floating pool)
+    for i = 0, 9 do
         dormant_wsi.image_available[i]  = sync.imageAvailable[i]
         dormant_wsi.render_finished[i]  = sync.renderFinished[i]
         dormant_wsi.in_flight[i]        = sync.inFlight[i]

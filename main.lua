@@ -459,10 +459,15 @@ local function main()
                 inactive_wsi.swapchain = tenant.sc.handle
                 inactive_wsi.status = 1
 
+                -- 1. Map the new Physical Images
                 local max_images = math.min(tenant.sc.imageCount, 10)
                 for i = 0, max_images - 1 do
                     inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
                     inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
+                end
+
+                -- 2. Map the new Sync Primitives (Always 10)
+                for i = 0, 9 do
                     inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
                     inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
                     inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
