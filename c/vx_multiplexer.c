@@ -129,6 +129,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
     printf("[C-CORE] Async Render Multiplexer Online.\n");
 
     uint32_t t_frame[MAX_WINDOWS] = {0};
+    uint32_t t_floating_sem[MAX_WINDOWS] = {0}; // [THE MATRIX FIX] Add this!
 
     while (L(g_render_thread_active) && L(g_engine.mailbox.is_running)) {
 
@@ -256,22 +257,27 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             uint64_t local_view  = win_wsi->swapchain_views[img_idx];
 
             vkResetCommandBuffer(cmd_buf, 0);
-
             vx_record_commands(cmd_buf, p, p->draw_queue, p->draw_count, dev_ctx, local_image, local_view);
 
             VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-            VkSemaphore render_finished_sem = win_wsi->render_finished[img_idx];
+            // [THE DECOUPLING]
+            // We use modulo 10 because shared_structs.h statically allocates arrays of 10.
+            // This guarantees the render_finished semaphore outpaces the blocked DWM queue.
+            uint32_t f_idx = t_floating_sem[wid] % 10;
+            t_floating_sem[wid]++;
+
+            VkSemaphore render_finished_sem = win_wsi->render_finished[f_idx];
 
             VkSubmitInfo submitInfo = {
                 .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
                 .waitSemaphoreCount   = 1,
-                .pWaitSemaphores      = &win_wsi->image_available[current_frame],
+                .pWaitSemaphores      = &win_wsi->image_available[current_frame], // Tied to CPU fence (Safe)
                 .pWaitDstStageMask    = &waitStage,
                 .commandBufferCount   = 1,
                 .pCommandBuffers      = &cmd_buf,
                 .signalSemaphoreCount = 1,
-                .pSignalSemaphores    = &render_finished_sem
+                .pSignalSemaphores    = &render_finished_sem                      // Tied to floating pool (Safe)
             };
 
             PFN_vkQueueSubmit pfnSubmit = (PFN_vkQueueSubmit)dev_ctx->vkQueueSubmit;
