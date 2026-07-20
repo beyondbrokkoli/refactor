@@ -192,6 +192,15 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             S(g_render_busy[wid], 1);
 
             uint32_t gen = p->swapchain_generation;
+            uint32_t current_gen = L(g_wsi_generation[wid]);
+
+            // [THE FIX] Drop packets that belong to a zombie swapchain
+            if (gen != current_gen) {
+                // We don't want to spam the console, but a debug print helps confirm it works:
+                // printf("[C-CORE] Tenant %d: Dropping stale packet (Gen %d vs Current %d)\n", wid, gen, current_gen);
+                goto frame_done;
+            }
+
             uint32_t active_idx = gen & 1;
 
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
