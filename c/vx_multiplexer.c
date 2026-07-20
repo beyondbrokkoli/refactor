@@ -261,7 +261,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
 
             VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-            VkSemaphore render_finished_sem = win_wsi->render_finished[current_frame];
+            VkSemaphore render_finished_sem = win_wsi->render_finished[img_idx];
 
             VkSubmitInfo submitInfo = {
                 .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
