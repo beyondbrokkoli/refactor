@@ -407,7 +407,7 @@ local function main()
                     tenant.wsi_state = 2
                 end
 
-elseif tenant.wsi_state == 2 then
+            elseif tenant.wsi_state == 2 then
                 -- STATE 2: BUILDING_WSI (Construct & Flip)
                 local new_w, new_h = tenant.target_w, tenant.target_h
 
@@ -433,14 +433,15 @@ elseif tenant.wsi_state == 2 then
                 local final_h = new_sc.extent.height
 
                 local new_depth = graphics_mod.BuildDepth(vk_rt.vk, vk_rt, final_w, final_h)
-                
+
                 -- [THE MATRIX DODGE]: Forge brand new semaphores for the new generation!
                 local new_sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, new_sc.imageCount)
 
-                -- Queue the old Depth AND old Sync for GC!
+                -- Queue the old Depth, old Sync, AND OLD SWAPCHAIN for GC!
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
-                    old_sync = tenant.sync, -- [THE FIX] Send old semaphores to the grave
+                    old_sc_state = tenant.sc, -- [SEAL THE LEAK]
+                    old_sync = tenant.sync, 
                     old_depth = {
                         image = tenant.gfx.depthImage,
                         view = tenant.gfx.depthImageView,
@@ -492,20 +493,30 @@ elseif tenant.wsi_state == 2 then
                     -- 1.5 seconds is massive mathematical overkill to ensure safety.
                     if total_time - z.time_added > 1.5 then
 
+                        -- 0. Destroy Old Swapchain FIRST
+                        if z.old_sc_state then
+                            require("swapchain").Destroy(vk_rt.vk, vk_rt, z.old_sc_state)
+                            z.old_sc_state = nil
+                        end
+
                         -- 1. Destroy Sync Primitives
                         if z.old_sync then
                             for i = 0, z.old_sync.safe_frames - 1 do
-                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.imageAvailable[i], nil)
-                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.renderFinished[i], nil)
-                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.old_sync.inFlight[i], nil)
+                                if ffi.cast("uint64_t", z.old_sync.imageAvailable[i]) ~= 0 then
+                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.imageAvailable[i], nil)
+                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.renderFinished[i], nil)
+                                    vk_rt.vk.vkDestroyFence(vk_rt.device, z.old_sync.inFlight[i], nil)
+                                end
                             end
                         end
 
                         -- 2. Destroy Depth Buffer
-                        if z.old_depth then
+                        if z.old_depth and ffi.cast("uint64_t", z.old_depth.view) ~= 0 then
                             vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
                             vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
                             vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
+
+                            z.old_depth.view = ffi.cast("VkImageView", 0) -- Matrix Shield
                         end
 
                         print("[LUA GC] Ghost Generation purged safely.")
@@ -530,38 +541,28 @@ elseif tenant.wsi_state == 2 then
                     end
 
                     -- Phase 1 (Wait for Purge): Safely destroy logical CPU pipelines and sync
-                    if z.pool_purged and not z.logic_purged and WindowAPI.get_cmd_state(win_id) == 0 then
+                    -- [THE FIX] Strip the vkGetFenceStatus lie! C-Core uses immortal_fence. 
+                    -- Just wait for age > 1.0 to guarantee the queue is idled.
+                    if z.pool_purged and not z.logic_purged and age > 1.0 then
 
-                        -- [THE GOLDEN FIX] Peek at the GPU without blocking the thread!
-                        local gpu_is_done = true
                         if z.sync then
                             for i = 0, z.sync.safe_frames - 1 do
-                                local status = vk_rt.vk.vkGetFenceStatus(vk_rt.device, z.sync.inFlight[i])
-                                if status ~= reg.vk_result.success then
-                                    gpu_is_done = false
-                                    break
-                                end
-                            end
-                        end
-
-                        if gpu_is_done then
-                            -- 1. Sync FIRST (Swapchain is handled in Phase 2 for Teardowns)
-                            if z.sync then
-                                for i = 0, z.sync.safe_frames - 1 do
+                                if ffi.cast("uint64_t", z.sync.imageAvailable[i]) ~= 0 then
                                     vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.imageAvailable[i], nil)
                                     vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.renderFinished[i], nil)
                                     vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
+
+                                    -- Zero-Trust Shield
+                                    z.sync.imageAvailable[i] = ffi.cast("VkSemaphore", 0)
+                                    z.sync.renderFinished[i] = ffi.cast("VkSemaphore", 0)
+                                    z.sync.inFlight[i] = ffi.cast("VkFence", 0)
                                 end
                             end
-
-                            -- 2. Pipeline SECOND
-                            if z.gfx then require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx) end
-
-                            z.logic_purged = true
-                            print(string.format("[LUA GC] Tenant %d: Teardown Phase 1 (Logical Purge) complete.", win_id))
-                        else
-                            -- The GPU is stalled by the OS. Wait another frame before purging logic.
                         end
+
+                        if z.gfx then require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx) end
+                        z.logic_purged = true
+                        print(string.format("[LUA GC] Tenant %d: Teardown Phase 1 (Logical Purge) complete.", win_id))
                     end
 
                     -- Phase 2 (2.5 Seconds): Physical WSI, Surface & OS Window destruction
