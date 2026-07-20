@@ -431,12 +431,15 @@ local function main()
                 local final_w = new_sc.extent.width
                 local final_h = new_sc.extent.height
 
-                -- [THE MATRIX DODGE]: Build a new depth buffer, completely independent of the pipelines
+                -- [THE MATRIX DODGE]: Build a new depth buffer AND new sync primitives
                 local new_depth = graphics_mod.BuildDepth(vk_rt.vk, vk_rt, final_w, final_h)
+                local new_sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, new_sc.imageCount)
 
-                -- Queue ONLY the old Depth Buffer for GC (C-Core handles the Swapchain!)
+                -- Queue the old Swapchain, Depth Buffer, and Sync Primitives for GC
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
+                    sc = tenant.sc,
+                    old_sync = tenant.sync,
                     old_depth = {
                         image = tenant.gfx.depthImage,
                         view = tenant.gfx.depthImageView,
@@ -447,6 +450,7 @@ local function main()
 
                 -- Update Lua State
                 tenant.sc = new_sc
+                tenant.sync = new_sync
                 tenant.width = final_w
                 tenant.height = final_h
                 tenant.generation = next_gen
@@ -463,6 +467,8 @@ local function main()
                 for i = 0, max_images - 1 do
                     inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
                     inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
+
+                    -- Now the C-Core gets completely fresh semaphores!
                     inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
                     inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
                     inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
@@ -479,12 +485,24 @@ local function main()
                 for _, z in ipairs(tenant.zombies) do
 
                     if total_time - z.time_added > 1.0 then
-                        -- C-Core handles the Swapchain. Lua ONLY cleans up the isolated Depth Buffer.
+
+                        -- 1. Sync Primitives (Destroyed safely in isolation)
+                        if z.old_sync then
+                            for i = 0, z.old_sync.safe_frames - 1 do
+                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.old_sync.inFlight[i], nil)
+                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.imageAvailable[i], nil)
+                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.renderFinished[i], nil)
+                            end
+                        end
+
+                        -- 2. Depth Buffer
                         if z.old_depth then
                             vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
                             vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
                             vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
                         end
+
+                        -- C-Core handles the physical Swapchain destruction!
                     else
                         table.insert(survivor_zombies, z)
                     end
