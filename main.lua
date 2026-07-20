@@ -479,13 +479,52 @@ local function main()
                 for _, z in ipairs(tenant.zombies) do
 
                     if total_time - z.time_added > 1.0 then
-                        -- C-Core handles the Swapchain. Lua ONLY cleans up the isolated Depth Buffer.
-                        if z.old_depth then
-                            vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
-                            vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
-                            vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
+
+                        -- [THE GOLDEN FIX] Peek at the GPU without blocking the thread!
+                        local gpu_is_done = true
+                        if z.old_sync then
+                            for i = 0, z.old_sync.safe_frames - 1 do
+                                -- If even one fence is still busy (e.g. OS VSync stall), abort the GC!
+                                local status = vk_rt.vk.vkGetFenceStatus(vk_rt.device, z.old_sync.inFlight[i])
+                                if status ~= reg.vk_result.success then
+                                    gpu_is_done = false
+                                    break
+                                end
+                            end
+                        end
+
+                        if gpu_is_done then
+                            -- 1. Swapchain FIRST
+                            if z.sc then
+                                require("swapchain").Destroy(vk_rt.vk, vk_rt, z.sc)
+                            end
+
+                            -- 2. Sync Primitives SECOND
+                            if z.old_sync then
+                                for i = 0, z.old_sync.safe_frames - 1 do
+                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.imageAvailable[i], nil)
+                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.renderFinished[i], nil)
+                                    vk_rt.vk.vkDestroyFence(vk_rt.device, z.old_sync.inFlight[i], nil)
+                                end
+                            end
+
+                            -- 3. Depth Buffer THIRD
+                            if z.old_depth then
+                                vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
+                                vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
+                                vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
+                            end
+
+                            -- 4. Pipeline LAST (If applicable during full teardown)
+                            if z.gfx then
+                                require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx)
+                            end
+                        else
+                            -- The GPU is stalled by the OS. Wait another frame.
+                            table.insert(survivor_zombies, z)
                         end
                     else
+                        -- Hasn't been 1.0 seconds yet.
                         table.insert(survivor_zombies, z)
                     end
                 end
@@ -508,25 +547,36 @@ local function main()
                     -- Phase 1 (Wait for Purge): Safely destroy logical CPU pipelines and sync
                     if z.pool_purged and not z.logic_purged and WindowAPI.get_cmd_state(win_id) == 0 then
 
-                        -- NO VULKAN WAITS.
-
-                        -- 1. Swapchain FIRST (if applicable in Phase 1, though it may be delayed to Phase 2,
-                        -- just ensure Semaphores are deleted cleanly).
-
-                        -- 2. Sync SECOND
+                        -- [THE GOLDEN FIX] Peek at the GPU without blocking the thread!
+                        local gpu_is_done = true
                         if z.sync then
                             for i = 0, z.sync.safe_frames - 1 do
-                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.imageAvailable[i], nil)
-                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.renderFinished[i], nil)
-                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
+                                local status = vk_rt.vk.vkGetFenceStatus(vk_rt.device, z.sync.inFlight[i])
+                                if status ~= reg.vk_result.success then
+                                    gpu_is_done = false
+                                    break
+                                end
                             end
                         end
 
-                        -- 3. Pipeline LAST
-                        if z.gfx then require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx) end
+                        if gpu_is_done then
+                            -- 1. Sync FIRST (Swapchain is handled in Phase 2 for Teardowns)
+                            if z.sync then
+                                for i = 0, z.sync.safe_frames - 1 do
+                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.imageAvailable[i], nil)
+                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.renderFinished[i], nil)
+                                    vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
+                                end
+                            end
 
-                        z.logic_purged = true
-                        print(string.format("[LUA GC] Tenant %d: Teardown Phase 1 (Logical Purge) complete.", win_id))
+                            -- 2. Pipeline SECOND
+                            if z.gfx then require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx) end
+
+                            z.logic_purged = true
+                            print(string.format("[LUA GC] Tenant %d: Teardown Phase 1 (Logical Purge) complete.", win_id))
+                        else
+                            -- The GPU is stalled by the OS. Wait another frame before purging logic.
+                        end
                     end
 
                     -- Phase 2 (2.5 Seconds): Physical WSI, Surface & OS Window destruction
@@ -552,10 +602,7 @@ local function main()
                         table.insert(survivor_teardowns, z)
                     end
                 end
-
-                if TenantRegistry.active[win_id] then
-                    tenant.teardown_zombies = survivor_teardowns
-                end
+                tenant.teardown_zombies = survivor_teardowns
             end
 
             -- Bypass frame packing entirely for dead, dying, or broken tenants
