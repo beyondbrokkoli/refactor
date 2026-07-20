@@ -16,11 +16,10 @@ EXPORT void vx_pump_zombie_gc(void) {
 
             // 1. Verify ALL in-flight fences for this zombie have signaled
             bool safely_finished = true;
-            
-            // Adjust 'MAX_FRAMES_IN_FLIGHT' and 'zombie->in_flight_fences' to match your struct
-            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) { 
-                if (zombie->in_flight_fences[i] != VK_NULL_HANDLE) {
-                    if (vkGetFenceStatus(dev_ctx->device, zombie->in_flight_fences[i]) != VK_SUCCESS) {
+
+            for (int i = 0; i < 10; i++) {
+                if (zombie->images_in_flight_fences[i] != VK_NULL_HANDLE) {
+                    if (vkGetFenceStatus(dev_ctx->device, zombie->images_in_flight_fences[i]) != VK_SUCCESS) {
                         safely_finished = false;
                         break; // The GPU/OS is still busy with this swapchain
                     }
@@ -29,7 +28,7 @@ EXPORT void vx_pump_zombie_gc(void) {
 
             // 2. If the GPU isn't done, skip this pump and try again next multiplexer tick
             if (!safely_finished) {
-                continue; 
+                continue;
             }
 
             // 3. GPU is completely clear. Commence destruction.
