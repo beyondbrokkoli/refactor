@@ -407,7 +407,7 @@ local function main()
                     tenant.wsi_state = 2
                 end
 
-            elseif tenant.wsi_state == 2 then
+elseif tenant.wsi_state == 2 then
                 -- STATE 2: BUILDING_WSI (Construct & Flip)
                 local new_w, new_h = tenant.target_w, tenant.target_h
 
@@ -418,6 +418,7 @@ local function main()
 
                 local swapchain_mod = require("swapchain")
                 local graphics_mod = require("graphics_pipeline")
+                local renderer_mod = require("renderer") -- [ADD THIS]
 
                 local old_sc_handle = tenant.sc and tenant.sc.handle or ffi.cast("VkSwapchainKHR", 0)
                 local new_sc = swapchain_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, old_sc_handle, WindowAPI.get_surface(win_id))
@@ -431,12 +432,15 @@ local function main()
                 local final_w = new_sc.extent.width
                 local final_h = new_sc.extent.height
 
-                -- [THE MATRIX DODGE]: Build a new depth buffer, completely independent of the pipelines
                 local new_depth = graphics_mod.BuildDepth(vk_rt.vk, vk_rt, final_w, final_h)
+                
+                -- [THE MATRIX DODGE]: Forge brand new semaphores for the new generation!
+                local new_sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, new_sc.imageCount)
 
-                -- Queue ONLY the old Depth Buffer for GC (C-Core handles the Swapchain!)
+                -- Queue the old Depth AND old Sync for GC!
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
+                    old_sync = tenant.sync, -- [THE FIX] Send old semaphores to the grave
                     old_depth = {
                         image = tenant.gfx.depthImage,
                         view = tenant.gfx.depthImageView,
@@ -447,6 +451,7 @@ local function main()
 
                 -- Update Lua State
                 tenant.sc = new_sc
+                tenant.sync = new_sync -- [THE FIX] Bind the new semaphores
                 tenant.width = final_w
                 tenant.height = final_h
                 tenant.generation = next_gen
@@ -459,15 +464,9 @@ local function main()
                 inactive_wsi.swapchain = tenant.sc.handle
                 inactive_wsi.status = 1
 
-                -- 1. Map the new Physical Images
-                local max_images = math.min(tenant.sc.imageCount, 10)
-                for i = 0, max_images - 1 do
+                for i = 0, 9 do
                     inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
                     inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
-                end
-
-                -- 2. Map the new Sync Primitives (Always 10)
-                for i = 0, 9 do
                     inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
                     inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
                     inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
@@ -476,6 +475,12 @@ local function main()
                 WindowAPI.flip_wsi(win_id)
                 print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
                 tenant.wsi_state = 0
+
+                -- [THE LOCK-FREE HANDSHAKE]
+                -- Tell the C-Core to count down 10 frames and then vkQueueWaitIdle this old queue!
+                local true_zombie_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
+                local true_zombie = ffi.cast("VulkanSwapchainContext*", true_zombie_ptr)
+                true_zombie.status = 13
             end
 
             -- [PROCESS LUA-SIDE ZOMBIE GC]
@@ -483,53 +488,28 @@ local function main()
                 local survivor_zombies = {}
                 for _, z in ipairs(tenant.zombies) do
 
-                    if total_time - z.time_added > 1.0 then
+                    -- C-Core's z_status countdown guarantees the queue is idled.
+                    -- 1.5 seconds is massive mathematical overkill to ensure safety.
+                    if total_time - z.time_added > 1.5 then
 
-                        -- [THE GOLDEN FIX] Peek at the GPU without blocking the thread!
-                        local gpu_is_done = true
+                        -- 1. Destroy Sync Primitives
                         if z.old_sync then
                             for i = 0, z.old_sync.safe_frames - 1 do
-                                -- If even one fence is still busy (e.g. OS VSync stall), abort the GC!
-                                local status = vk_rt.vk.vkGetFenceStatus(vk_rt.device, z.old_sync.inFlight[i])
-                                if status ~= reg.vk_result.success then
-                                    gpu_is_done = false
-                                    break
-                                end
+                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.imageAvailable[i], nil)
+                                vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.renderFinished[i], nil)
+                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.old_sync.inFlight[i], nil)
                             end
                         end
 
-                        if gpu_is_done then
-                            -- 1. Swapchain FIRST
-                            if z.sc then
-                                require("swapchain").Destroy(vk_rt.vk, vk_rt, z.sc)
-                            end
-
-                            -- 2. Sync Primitives SECOND
-                            if z.old_sync then
-                                for i = 0, z.old_sync.safe_frames - 1 do
-                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.imageAvailable[i], nil)
-                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.renderFinished[i], nil)
-                                    vk_rt.vk.vkDestroyFence(vk_rt.device, z.old_sync.inFlight[i], nil)
-                                end
-                            end
-
-                            -- 3. Depth Buffer THIRD
-                            if z.old_depth then
-                                vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
-                                vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
-                                vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
-                            end
-
-                            -- 4. Pipeline LAST (If applicable during full teardown)
-                            if z.gfx then
-                                require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx)
-                            end
-                        else
-                            -- The GPU is stalled by the OS. Wait another frame.
-                            table.insert(survivor_zombies, z)
+                        -- 2. Destroy Depth Buffer
+                        if z.old_depth then
+                            vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
+                            vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
+                            vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
                         end
+
+                        print("[LUA GC] Ghost Generation purged safely.")
                     else
-                        -- Hasn't been 1.0 seconds yet.
                         table.insert(survivor_zombies, z)
                     end
                 end
