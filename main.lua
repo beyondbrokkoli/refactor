@@ -434,10 +434,9 @@ local function main()
                 -- [THE MATRIX DODGE]: Build a new depth buffer, completely independent of the pipelines
                 local new_depth = graphics_mod.BuildDepth(vk_rt.vk, vk_rt, final_w, final_h)
 
-                -- Queue the old Swapchain and the old Depth Buffer for GC
+                -- Queue ONLY the old Depth Buffer for GC (C-Core handles the Swapchain!)
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
-                    sc = tenant.sc,
                     old_depth = {
                         image = tenant.gfx.depthImage,
                         view = tenant.gfx.depthImageView,
@@ -480,12 +479,7 @@ local function main()
                 for _, z in ipairs(tenant.zombies) do
 
                     if total_time - z.time_added > 1.0 then
-                        -- 1. Swapchain FIRST
-                        if z.sc then
-                            require("swapchain").Destroy(vk_rt.vk, vk_rt, z.sc)
-                        end
-
-                        -- 2. Depth Buffer SECOND
+                        -- C-Core handles the Swapchain. Lua ONLY cleans up the isolated Depth Buffer.
                         if z.old_depth then
                             vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
                             vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
