@@ -295,9 +295,17 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
 
             uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
-            if (z_status > 2) {
+            if (z_status > 3) {
                 atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_relaxed);
+            } else if (z_status == 3) {
+                // [THE MATRIX DODGE] We are IN the render thread. We own this queue.
+                // Idling it here takes < 1ms, avoids all collisions, and silences VVL forever.
+                if (dev_ctx->queue) {
+                    vkQueueWaitIdle(dev_ctx->queue);
+                }
+                atomic_store_explicit((_Atomic uint32_t*)&zombie->status, 2, memory_order_release);
             }
+
             S(g_render_busy[wid], 0);
             t_frame[wid] = (current_frame + 1) % frame_slots;
         }

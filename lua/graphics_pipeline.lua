@@ -122,11 +122,10 @@ local function BuildSinglePipeline(vk, device, layout, colorFormat, vertModule, 
     return pPipeline[0]
 end
 
-function GraphicsPipeline.Init(vk, core_state, width, height, pipelineLayout, colorFormat, configs)
-    print("[GRAPHICS] Building Reverse-Z Depth Buffer and Shader Modules...")
+-- [THE SURGICAL SPLIT]: Isolate resolution-dependent memory
+function GraphicsPipeline.BuildDepth(vk, core_state, width, height)
     local device = core_state.device
 
-    -- 1. Create Depth Image (Mechanism preserved)
     local dImgInfo = ffi.new("VkImageCreateInfo")
     ffi.fill(dImgInfo, ffi.sizeof(dImgInfo))
     dImgInfo.sType = vk_struct.image_create
@@ -158,14 +157,25 @@ function GraphicsPipeline.Init(vk, core_state, width, height, pipelineLayout, co
     })
     local pDepthView = ffi.new("VkImageView[1]"); assert(vk.vkCreateImageView(device, dViewInfo, nil, pDepthView) == 0)
 
-    -- [FIX APPLIED] Embed the queue inside the returned instance state
+    return {
+        image = pDepthImage[0],
+        memory = pDepthMemory[0],
+        view = pDepthView[0]
+    }
+end
+
+function GraphicsPipeline.Init(vk, core_state, width, height, pipelineLayout, colorFormat, configs)
+    print("[GRAPHICS] Building Reverse-Z Depth Buffer and Shader Modules...")
+    local device = core_state.device
+
+    -- Call our new isolated function
+    local depth = GraphicsPipeline.BuildDepth(vk, core_state, width, height)
+
     local state = {
-        depthImage = pDepthImage[0], depthMemory = pDepthMemory[0], depthImageView = pDepthView[0],
+        depthImage = depth.image, depthMemory = depth.memory, depthImageView = depth.view,
         pipelineLayout = pipelineLayout, colorFormat = colorFormat,
         pipelines = {}, modules = {}, configs = configs,
-        deletion_queue = {},
-        d_head = 0,
-        d_tail = 0
+        deletion_queue = {}, d_head = 0, d_tail = 0
     }
 
     -- Initialize the isolated queue

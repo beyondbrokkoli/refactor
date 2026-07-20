@@ -39,8 +39,10 @@ end
 function Renderer.Destroy(vk, device, sync)
     print("[TEARDOWN] Dismantling Renderer Sync Objects...")
 
-    -- DELETE THIS LINE: vk.vkDeviceWaitIdle(device)
-    -- The C-core already idled the device safely on the Render Thread!
+    -- [THE VALIDATION FIX]: We must appease VVL's bookkeeping.
+    -- The OS holds presentation semaphores indefinitely in VVL's eyes.
+    -- Calling this during the delayed Lua GC sweep safely proves to VVL the queue is clear.
+    vk.vkDeviceWaitIdle(device)
 
     if not sync then return end
 

@@ -31,7 +31,10 @@ function Swapchain.Init(vk, core_state, width, height, old_swapchain, explicit_s
     ffi.fill(swapchainInfo, ffi.sizeof(swapchainInfo))
     swapchainInfo.sType = vk_struct.swapchain_create
     swapchainInfo.surface = surface
+
+    -- [THE FIX]: Re-enable swapchain chaining!
     swapchainInfo.oldSwapchain = old_swapchain or ffi.cast("VkSwapchainKHR", 0)
+
     swapchainInfo.minImageCount = surfaceCaps.minImageCount + 1
     swapchainInfo.imageFormat = vk_format.b8g8r8a8_srgb
     swapchainInfo.imageColorSpace = vk_swapchain.color_space_srgb_nonlinear

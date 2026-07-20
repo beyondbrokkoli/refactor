@@ -413,63 +413,62 @@ local function main()
 
                 local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
                 local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
-
                 local current_gen = ffi.C.vx_sys_get_wsi_generation(win_id)
                 local next_gen = current_gen + 1
 
                 local swapchain_mod = require("swapchain")
                 local graphics_mod = require("graphics_pipeline")
-                local renderer_mod = require("renderer")
 
-                local old_sc_handle = tenant.sc.handle
+                local old_sc_handle = tenant.sc and tenant.sc.handle or ffi.cast("VkSwapchainKHR", 0)
+                local new_sc = swapchain_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, old_sc_handle, WindowAPI.get_surface(win_id))
 
-                -- [QUEUE LUA GARBAGE]
-                if not tenant.zombies then tenant.zombies = {} end
-                table.insert(tenant.zombies, {
-                    gfx = tenant.gfx,
-                    sync = tenant.sync,
-                    time_added = total_time -- THE FIX: Stamp with real clock time
-                })
-
-                -- Build New Vulkan Objects
-                tenant.sc = swapchain_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, old_sc_handle, WindowAPI.get_surface(win_id))
-
-                if not tenant.sc then
+                if not new_sc then
                     print(string.format("[LUA FSM] Tenant %d: Swapchain creation failed. Aborting rebuild.", win_id))
                     tenant.wsi_state = 0
                     goto continue_tenant
                 end
 
-                -- 🚨 NEW FIX: Vulkan has the final say on dimensions. Read the clamped extent!
-                local final_w = tenant.sc.extent.width
-                local final_h = tenant.sc.extent.height
+                local final_w = new_sc.extent.width
+                local final_h = new_sc.extent.height
 
-                -- Use final_w and final_h for the rest of the pipeline
-                tenant.gfx = graphics_mod.Init(vk_rt.vk, vk_rt, final_w, final_h, desc.pipelineLayout, tenant.sc.format, manifest.graphics)
-                tenant.sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, tenant.sc.imageCount)
+                -- [THE MATRIX DODGE]: Build a new depth buffer, completely independent of the pipelines
+                local new_depth = graphics_mod.BuildDepth(vk_rt.vk, vk_rt, final_w, final_h)
 
-                -- Populate Dormant C Slot directly via FFI
-                inactive_wsi.swapchain = tenant.sc.handle
-                inactive_wsi.status = 1 -- ACTIVE
+                -- Queue the old Swapchain and the old Depth Buffer for GC
+                if not tenant.zombies then tenant.zombies = {} end
+                table.insert(tenant.zombies, {
+                    sc = tenant.sc,
+                    old_depth = {
+                        image = tenant.gfx.depthImage,
+                        view = tenant.gfx.depthImageView,
+                        mem = tenant.gfx.depthMemory
+                    },
+                    time_added = total_time
+                })
 
-               local max_images = math.min(tenant.sc.imageCount, 10) -- Protect the C-struct bounds
-
-               for i = 0, max_images - 1 do
-                   inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
-                   inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
-
-                   -- Removed the hardcoded 'if i < 3' limit.
-                   inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
-                   inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
-                   inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
-               end
-
-                -- NEW FIX: Sync the Lua tenant state to the true hardware dimensions
+                -- Update Lua State
+                tenant.sc = new_sc
                 tenant.width = final_w
                 tenant.height = final_h
                 tenant.generation = next_gen
 
-                -- [THE FLIP]
+                -- Hot-swap the live engine state!
+                tenant.gfx.depthImage = new_depth.image
+                tenant.gfx.depthMemory = new_depth.memory
+                tenant.gfx.depthImageView = new_depth.view
+
+                inactive_wsi.swapchain = tenant.sc.handle
+                inactive_wsi.status = 1
+
+                local max_images = math.min(tenant.sc.imageCount, 10)
+                for i = 0, max_images - 1 do
+                    inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
+                    inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
+                    inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
+                    inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
+                    inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
+                end
+
                 WindowAPI.flip_wsi(win_id)
                 print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
                 tenant.wsi_state = 0
@@ -479,15 +478,18 @@ local function main()
             if tenant.zombies and #tenant.zombies > 0 then
                 local survivor_zombies = {}
                 for _, z in ipairs(tenant.zombies) do
-                    -- THE FIX: Check elapsed real time instead of simulation ticks
-                    if total_time - z.time_added > 1.0 then
-                        require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx)
 
-                        -- [FIX]: C-Core destroys the semaphores, so we MUST ONLY destroy the fences!
-                        if z.sync then
-                            for i = 0, z.sync.safe_frames - 1 do
-                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
-                            end
+                    if total_time - z.time_added > 1.0 then
+                        -- 1. Swapchain FIRST
+                        if z.sc then
+                            require("swapchain").Destroy(vk_rt.vk, vk_rt, z.sc)
+                        end
+
+                        -- 2. Depth Buffer SECOND
+                        if z.old_depth then
+                            vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
+                            vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
+                            vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
                         end
                     else
                         table.insert(survivor_zombies, z)
@@ -511,16 +513,24 @@ local function main()
 
                     -- Phase 1 (Wait for Purge): Safely destroy logical CPU pipelines and sync
                     if z.pool_purged and not z.logic_purged and WindowAPI.get_cmd_state(win_id) == 0 then
-                        if z.gfx then require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx) end
 
-                        -- THE 32-OBJECT LEAK FIX: Lua must destroy the semaphores for Teardowns!
+                        -- NO VULKAN WAITS.
+
+                        -- 1. Swapchain FIRST (if applicable in Phase 1, though it may be delayed to Phase 2,
+                        -- just ensure Semaphores are deleted cleanly).
+
+                        -- 2. Sync SECOND
                         if z.sync then
                             for i = 0, z.sync.safe_frames - 1 do
-                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
                                 vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.imageAvailable[i], nil)
                                 vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.renderFinished[i], nil)
+                                vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
                             end
                         end
+
+                        -- 3. Pipeline LAST
+                        if z.gfx then require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx) end
+
                         z.logic_purged = true
                         print(string.format("[LUA GC] Tenant %d: Teardown Phase 1 (Logical Purge) complete.", win_id))
                     end
@@ -554,8 +564,8 @@ local function main()
                 end
             end
 
-            -- Bypass frame packing entirely for dead/dying tenants
-            if tenant.kill_state or tenant.suspended then
+            -- Bypass frame packing entirely for dead, dying, or broken tenants
+            if tenant.kill_state or tenant.suspended or tenant.sc == nil or tenant.gfx == nil then
                 goto continue_tenant
             end
 
