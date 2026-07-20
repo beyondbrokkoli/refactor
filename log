@@ -1,16 +1,9 @@
-
-[HEARTBEAT] Sim Tick: 7411 | Confirmed: 7409 | Accum: 0.0150
-  -> [DIAGNOSTIC] Peer 0 | Highest Tick: 0 | AckOfMe: 0
-  -> [DIAGNOSTIC] Peer 1 | Highest Tick: 7420 | AckOfMe: 7399
-[INPUT] Window 3 clicked tile 31857
-[LUA CO] Intercepted close request for Tenant 3. Initiating Zombie Teardown V2...
-[C-CORE] Tenant 3: Lock-Free Teardown Initiated. Render thread severed.
-[LUA FSM] Tenant 3: Memory zeroed. Transitioning to Build phase...
-
-[LUA FATAL ERROR] main.lua:431: attempt to index field 'sc' (a nil value)
-
-[C-CORE] Shutdown triggered. Waiting for Lua VM...
-[C-CORE] Async Render Multiplexer gracefully terminated.
-[C-CORE] Async Transfer Thread gracefully terminated.
-[LUA-OS-THREAD] VM Destroyed.
-
+ vkQueueSubmit(): pSubmits[0].pSignalSemaphores[0] (VkSemaphore 0x180000000018) is being signaled by VkQueue 0x1fd4305c158, but it may still be in use by VkSwapchainKHR 0x100000000010.
+Most recently acquired image indices: 0, 1, 2, 0, 1, 2, [0], 1.
+(Brackets mark the last use of VkSemaphore 0x180000000018 in a presentation operation.)
+Swapchain image 0 was presented but was not re-acquired, so VkSemaphore 0x180000000018 may still be in use and cannot be safely reused with image index 1.
+Vulkan insight: See https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html for details on swapchain semaphore reuse. Examples of possible approaches:
+   a) Use a separate semaphore per swapchain image. Index these semaphores using the index of the ac
+quired image.
+   b) Consider the VK_KHR_swapchain_maintenance1 extension. It allows using a VkFence with the presentation operation.
+The Vulkan spec states: Each binary semaphore element of the pSignalSemaphores member of any element of pSubmits must be unsignaled when the semaphore signal operation it defines is executed on the device
