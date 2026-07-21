@@ -389,24 +389,30 @@ local function main()
             if tenant.wsi_state == 0 then
                 -- STATE 0: IDLE (Detect Resize & Fire Command)
                 if WindowAPI.get_resize_state(win_id) then
-                    local new_w, new_h = WindowAPI.get_window_size(win_id)
-                    if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
 
-                        -- [THE LOCK-FREE BACKPRESSURE]
-                        -- Check if the C-Core has successfully garbage collected the previous generation
-                        local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
-                        local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
+                    -- [THE BRILLIANT "CHEAT": DEFERRED RESIZE]
+                    -- 0 is typically the Left Mouse Button. Adjust to your API.
+                    -- If the user is actively dragging the window border, DO NOT rebuild!
+                    -- Let X11 stretch the existing swapchain buffer temporarily.
+                    if WindowAPI.is_mouse_down(win_id, 0) then
+                        -- The user is doing a chaotic drag.
+                        -- Do nothing. Wait for them to let go!
+                    else
+                        -- The mouse is released, OR it was an instant snap (AwesomeWM).
+                        -- We are clear to perform a single, pristine swapchain rebuild.
+                        local new_w, new_h = WindowAPI.get_window_size(win_id)
+                        if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
 
-                        if inactive_wsi.status == 0 then
-                            print(string.format("[LUA FSM] Tenant %d: Graveyard clear. Resize detected. Firing CMD 4...", win_id))
-                            tenant.target_w = new_w
-                            tenant.target_h = new_h
-                            WindowAPI.prepare_new_wsi(win_id, new_w, new_h) -- This fires CMD 4
-                            tenant.wsi_state = 1
-                        else
-                            -- Graveyard is still occupied (status is likely 2 or ticking down)!
-                            -- We MUST ignore this resize frame and keep rendering to feed the C-Core
-                            -- multiplexer so it can tick the clock down. Do NOT transition to state 1.
+                            local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
+                            local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
+
+                            if inactive_wsi.status == 0 then
+                                print(string.format("[LUA FSM] Tenant %d: Drag finished. Firing CMD 4...", win_id))
+                                tenant.target_w = new_w
+                                tenant.target_h = new_h
+                                WindowAPI.prepare_new_wsi(win_id, new_w, new_h)
+                                tenant.wsi_state = 1
+                            end
                         end
                     end
                 end

@@ -213,7 +213,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
 
             VkFence immortal_fence = g_render_fences[wid][current_frame];
             PFN_vkWaitForFences pfnWait = (PFN_vkWaitForFences)dev_ctx->vkWaitForFences;
-            if (pfnWait(dev_ctx->device, 1, &immortal_fence, VK_TRUE, 2000000000) == VK_TIMEOUT) {
+            if (pfnWait(dev_ctx->device, 1, &immortal_fence, VK_TRUE, UINT64_MAX) == VK_TIMEOUT) {
                 printf("[C-WARN] Tenant %d: GPU Fence Timeout (CPU Starvation).\n", wid);
                 goto frame_done;
             }
@@ -241,12 +241,6 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
 
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
-                // [THE SAFE SHOCK ABSORBER]
-                // We sync the queue HERE on the Render Thread!
-                // This safely clears the VVL "in use" tracking without causing
-                // a multi-threaded race condition with the GC.
-                vkQueueWaitIdle(dev_ctx->queue);
-
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
                 SLEEP_MS(10);
                 goto frame_done;

@@ -28,10 +28,7 @@ EXPORT void vx_pump_zombie_gc(void) {
                 // Its frames might be swallowed by the void. We cannot trust the compositor
                 // to signal presentId 2. Sync the queue and smash the zombie.
                 if (vx_sys_get_resize_state(wid) == 1) {
-                        // [THE HOISTED SHOCK ABSORBER]
-                        // X11 is actively tearing the geometry.
-                        // Bypass the wait and drop the hammer.
-                        // (vkQueueWaitIdle removed to prevent thread collision!)
+                        // NOTHING HAPPENS HERE
                     }
                 // 2. Window is stable. We can safely trust the OS Compositor handshake.
                 else {
