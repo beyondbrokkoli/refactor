@@ -437,10 +437,16 @@ local function main()
                 -- [THE MATRIX DODGE]: Forge brand new semaphores for the new generation!
                 local new_sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, new_sc.imageCount)
 
-                -- Queue ONLY the old Depth and Sync for GC (C-Core handles the Swapchain!)
+                -- [THE LOCK-FREE HANDSHAKE]
+                local true_zombie_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
+                local true_zombie = ffi.cast("VulkanSwapchainContext*", true_zombie_ptr)
+                true_zombie.status = 13
+
+                -- Queue the old Depth and Sync for GC!
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
                     old_sync = tenant.sync,
+                    zombie_ctx = true_zombie, -- [THE FIX] Pass the pointer to the graveyard!
                     old_depth = {
                         image = tenant.gfx.depthImage,
                         view = tenant.gfx.depthImageView,
@@ -494,11 +500,9 @@ local function main()
                 local survivor_zombies = {}
                 for _, z in ipairs(tenant.zombies) do
 
-                    -- C-Core's z_status countdown guarantees the queue is idled.
-                    -- 1.5 seconds is massive mathematical overkill to ensure safety.
-                    if total_time - z.time_added > 1.5 then
-
-                        -- [REMOVE THE old_sc_state DESTRUCTION BLOCK ENTIRELY]
+                    -- [THE HOLY GRAIL] Wait for C-Core to officially reach status == 2.
+                    -- If the user drags for 10 seconds, this patiently waits. No freezes!
+                    if z.zombie_ctx and z.zombie_ctx.status == 2 then
 
                         -- 1. Destroy Sync Primitives
                         if z.old_sync then
@@ -516,11 +520,10 @@ local function main()
                             vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
                             vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
                             vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
-
-                            z.old_depth.view = ffi.cast("VkImageView", 0) -- Matrix Shield
+                            z.old_depth.view = ffi.cast("VkImageView", 0) 
                         end
 
-                        print("[LUA GC] Ghost Generation purged safely.")
+                        print("[LUA GC] Ghost Generation purged safely (Queue officially idle).")
                     else
                         table.insert(survivor_zombies, z)
                     end
@@ -534,17 +537,16 @@ local function main()
                 for _, z in ipairs(tenant.teardown_zombies) do
                     local age = total_time - z.time_added
 
-                    -- Phase 0.5 (1.0 Seconds): Tell C-Core to reset the command pools (Drops WSI & Pipeline leases)
+                    -- Phase 0.5 (1.0 Seconds): Tell C-Core to reset the command pools
                     if age > 1.0 and not z.pool_purged then
                         ffi.C.vx_sys_set_cmd(win_id, 3, 0, 0)
                         z.pool_purged = true
                         print(string.format("[LUA GC] Tenant %d: Fired CMD 3 to purge C-Core Command Pools.", win_id))
                     end
 
-                    -- Phase 1 (Wait for Purge): Safely destroy logical CPU pipelines and sync
-                    -- [THE FIX] Strip the vkGetFenceStatus lie! C-Core uses immortal_fence. 
-                    -- Just wait for age > 1.0 to guarantee the queue is idled.
-                    if z.pool_purged and not z.logic_purged and age > 1.0 then
+                    -- Phase 1: Wait for Handshake!
+                    -- [THE FIX] Must verify CMD 3 is complete (get_cmd_state == 0) before destroying!
+                    if z.pool_purged and not z.logic_purged and WindowAPI.get_cmd_state(win_id) == 0 then
 
                         if z.sync then
                             for i = 0, z.sync.safe_frames - 1 do
@@ -553,7 +555,6 @@ local function main()
                                     vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.renderFinished[i], nil)
                                     vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
 
-                                    -- Zero-Trust Shield
                                     z.sync.imageAvailable[i] = ffi.cast("VkSemaphore", 0)
                                     z.sync.renderFinished[i] = ffi.cast("VkSemaphore", 0)
                                     z.sync.inFlight[i] = ffi.cast("VkFence", 0)
