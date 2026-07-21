@@ -154,14 +154,14 @@ local function main()
     )
 
     -- 2. Boot Tenant 1 (Editor)
-    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
-    TenantRegistry.active[1].gfx = graphics_mod.Init(
-        vk_rt.vk, vk_rt,
-        800, 600,
-        desc.pipelineLayout,
-        TenantRegistry.active[1].sc.format,
-        manifest.graphics
-    )
+--    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
+--    TenantRegistry.active[1].gfx = graphics_mod.Init(
+--        vk_rt.vk, vk_rt,
+--        800, 600,
+--        desc.pipelineLayout,
+--        TenantRegistry.active[1].sc.format,
+--        manifest.graphics
+--    )
 
     -- 3. Boot Tenant 2 (Reverse-Z Analytics)
 --    TenantRegistry.boot_tenant(vk_rt, 2, 800, 600, cfg_gfx.cfg.frame_slots)

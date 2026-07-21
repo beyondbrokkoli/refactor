@@ -101,6 +101,23 @@ uint32_t vx_net_hash_state(const void* data, size_t length, uint32_t initial_has
 int vx_net_stun_punch(const char* stun_server_ip, int stun_port, char* out_ip, int* out_port);
 void vx_net_shutdown(void);
 
+// Enabling VK_KHR_present_wait
+typedef struct VkPhysicalDevicePresentWaitFeaturesKHR {
+    int sType;
+    void* pNext;
+    uint32_t presentWait; // VkBool32
+} VkPhysicalDevicePresentWaitFeaturesKHR;
+
+typedef struct VkPresentIdKHR {
+    int sType;
+    const void* pNext;
+    uint32_t swapchainCount;
+    const uint64_t* pPresentIds;
+} VkPresentIdKHR;
+
+// The function pointer signature for the C-Core
+typedef int (*PFN_vkWaitForPresentKHR)(void* device, void* swapchain, uint64_t presentId, uint64_t timeout);
+
 // --- Universal Input Getter ---
 int vx_input_is_key_down(int win_id, int key);
 

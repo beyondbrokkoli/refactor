@@ -42,7 +42,8 @@ M.specs = {
             { type = "void*", name = "pfnSetPrimitiveTopology" },
             { type = "void*", name = "pfnSetDepthTestEnable" },
             { type = "void*", name = "pfnSetDepthWriteEnable" },
-            { type = "void*", name = "pfnSetDepthCompareOp" }
+            { type = "void*", name = "pfnSetDepthCompareOp" },
+            { type = "void*", name = "pfnWaitForPresentKHR" } -- [INJECT] The new function pointer
         }
     },
     {
@@ -51,6 +52,8 @@ M.specs = {
         members = {
             { type = "VkSwapchainKHR", name = "swapchain" },
             { type = "uint32_t", name = "status" }, -- 0 = INACTIVE, 1 = ACTIVE, 2 = RETIRING
+            { type = "uint64_t", name = "present_id_counter" }, -- [INJECT] Qwen's ID generator
+            { type = "uint64_t", name = "last_present_id" },    -- [INJECT] Qwen's ID tracker
             { type = "uint64_t", name = "swapchain_images", count = 10 },
             { type = "uint64_t", name = "swapchain_views", count = 10 },
             { type = "VkSemaphore", name = "image_available", count = 10 },

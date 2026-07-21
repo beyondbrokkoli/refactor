@@ -59,6 +59,9 @@ function TenantRegistry.boot_tenant(vk_rt, win_id, width, height, frame_slots)
     dev_ctx.pfnSetDepthWriteEnable = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkCmdSetDepthWriteEnableEXT"))
     dev_ctx.pfnSetDepthCompareOp = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkCmdSetDepthCompareOpEXT"))
 
+    -- [THE FINAL PUZZLE PIECE] Map Qwen's Present Wait function pointer
+    dev_ctx.pfnWaitForPresentKHR = ffi.cast("void*", vk_rt.pfnWaitForPresentKHR)
+
     -- Tell C-Core to allocate the tenant boundaries and cache the device context
     EngineAPI.allocate_tenant(win_id, dev_ctx, vk_rt.qIndex, vk_rt.tIndex)
 

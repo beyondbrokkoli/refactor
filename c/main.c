@@ -132,6 +132,9 @@ int main(int argc, char** argv) {
 
                 S(g_wsi_generation[id], active_gen + 1);
 
+                // [THE MISSING LINK] Acknowledge the resize so Lua doesn't infinitely loop!
+                S(g_engine.mailbox.tenants[id].window_resized, 0);
+
                 S(g_engine.mailbox.tenants[id].glfw_cmd, CMD_IDLE);
                 printf("[C-CORE] Tenant %d: Asynchronous WSI Flip Executed! (New Gen: %d)\n", id, active_gen + 1);
             }
