@@ -502,12 +502,13 @@ local function main()
                 print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
                 tenant.wsi_state = 0
 
-                -- [THE COUNTDOWN TRIGGER: RESTORED]
-                -- After the flip, the inactive slot is now the OLD swapchain.
-                -- We MUST set its status to 13 to ignite the 10-frame multiplexer countdown!
+                -- [THE EASY WAY]
+                -- Flag the old WSI for immediate destruction by the C-Core GC.
                 local true_zombie_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
                 local true_zombie = ffi.cast("VulkanSwapchainContext*", true_zombie_ptr)
-                true_zombie.status = 13
+
+                -- Skip 13. Skip the countdown. Send it straight to the executioner!
+                true_zombie.status = 2
             end
 
             -- [PROCESS LUA-SIDE ZOMBIE GC]

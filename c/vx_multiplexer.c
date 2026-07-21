@@ -311,31 +311,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             pfnPresent(dev_ctx->queue, &presentInfo);
 
         frame_done:
-            // [THE TRUE HOLY GRAIL - REDUX]
-            // We MUST decrement here! It ticks down once per Lua packet consumed.
-            // If X11 hoards images, pfnAcquire times out and jumps here, ticking the clock safely.
-            // By ticking down here, we eventually reach 2, destroy the old swapchain,
-            // release the X11 images, and break the deadlock organically.
-            uint32_t current_active_gen = L(g_wsi_generation[wid]);
-            uint32_t inactive_idx = (current_active_gen + 1) % 2;
-            VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
-
-            uint32_t z_status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
-            if (z_status > 3) {
-                atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_relaxed);
-            } else if (z_status == 3) {
-
-                // [THE THREAD-SAFE SHOCK ABSORBER]
-                // If X11 is tearing the window, the OS won't properly signal the Proxy Wait.
-                // We MUST sync the queue to satisfy the Validation Layers before the GC drops the hammer.
-                // Doing it here on the Render Thread completely prevents Thread Collisions!
-                if (L(g_engine.mailbox.tenants[wid].window_resized) == 1) {
-                    vkQueueWaitIdle(dev_ctx->queue);
-                }
-
-                atomic_store_explicit((_Atomic uint32_t*)&zombie->status, 2, memory_order_release);
-            }
-
+            // The Ouroboros has been slain. No countdown needed here.
             S(g_render_busy[wid], 0);
             t_frame[wid] = (current_frame + 1) % frame_slots;
         }
