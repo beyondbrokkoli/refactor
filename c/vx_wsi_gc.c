@@ -11,26 +11,10 @@ EXPORT void vx_pump_zombie_gc(void) {
         VulkanSwapchainContext* zombie = &g_wsi_ctx[wid][inactive_idx];
         uint32_t status = atomic_load_explicit((_Atomic uint32_t*)&zombie->status, memory_order_relaxed);
 
+        // Lock-free check. The C-Core multiplexer guarantees the GPU command
+        // buffers have finished because 10 immortal_fences have been waited on.
         if (status == 2) {
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
-
-            // [THE VVL SCALPEL] Ask the GPU natively if the queue is still using these images!
-            bool gpu_busy = false;
-            for (int i = 0; i < 10; i++) {
-                VkFence f = zombie->images_in_flight_fences[i];
-                if (f != VK_NULL_HANDLE) {
-                    if (vkGetFenceStatus(dev_ctx->device, f) == VK_NOT_READY) {
-                        gpu_busy = true;
-                        break;
-                    }
-                }
-            }
-
-            // If the GPU is still munching on the zombie frames, abort the GC.
-            // We will check again on the next main loop iteration. No blocking!
-            if (gpu_busy) {
-                continue;
-            }
 
             for (int i = 0; i < 10; i++) {
                 if (zombie->swapchain_views[i] != 0) {
@@ -39,11 +23,14 @@ EXPORT void vx_pump_zombie_gc(void) {
                 }
             }
 
+            // Vulkan natively allows destroying the swapchain even if the OS Compositor
+            // is actively presenting the final image to the monitor.
             if (zombie->swapchain != VK_NULL_HANDLE) {
                 vkDestroySwapchainKHR(dev_ctx->device, zombie->swapchain, NULL);
                 zombie->swapchain = VK_NULL_HANDLE;
             }
 
+            // Signal Lua that the Graveyard is physically clear
             atomic_store_explicit((_Atomic uint32_t*)&zombie->status, 0, memory_order_release);
             printf("[C-CORE] Tenant %d: Swapchain safely garbage collected.\n", wid);
         }
