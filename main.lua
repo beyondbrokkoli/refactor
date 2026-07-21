@@ -154,14 +154,14 @@ local function main()
     )
 
     -- 2. Boot Tenant 1 (Editor)
---    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
---    TenantRegistry.active[1].gfx = graphics_mod.Init(
---        vk_rt.vk, vk_rt,
---        800, 600,
---        desc.pipelineLayout,
---        TenantRegistry.active[1].sc.format,
---        manifest.graphics
---    )
+    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[1].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[1].sc.format,
+        manifest.graphics
+    )
 
     -- 3. Boot Tenant 2 (Reverse-Z Analytics)
 --    TenantRegistry.boot_tenant(vk_rt, 2, 800, 600, cfg_gfx.cfg.frame_slots)
@@ -437,11 +437,10 @@ local function main()
                 -- [THE MATRIX DODGE]: Forge brand new semaphores for the new generation!
                 local new_sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, new_sc.imageCount)
 
-                -- Queue the old Depth, old Sync, AND OLD SWAPCHAIN for GC!
+                -- Queue ONLY the old Depth and Sync for GC (C-Core handles the Swapchain!)
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
-                    old_sc_state = tenant.sc, -- [SEAL THE LEAK]
-                    old_sync = tenant.sync, 
+                    old_sync = tenant.sync,
                     old_depth = {
                         image = tenant.gfx.depthImage,
                         view = tenant.gfx.depthImageView,
@@ -465,9 +464,15 @@ local function main()
                 inactive_wsi.swapchain = tenant.sc.handle
                 inactive_wsi.status = 1
 
-                for i = 0, 9 do
+                -- 1. Map the Physical Images (Strictly bounded to prevent garbage reads)
+                local max_images = math.min(tenant.sc.imageCount, 10)
+                for i = 0, max_images - 1 do
                     inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
                     inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
+                end
+
+                -- 2. Map the Sync Primitives (Always 10 to feed the floating pool)
+                for i = 0, 9 do
                     inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
                     inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
                     inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
@@ -493,11 +498,7 @@ local function main()
                     -- 1.5 seconds is massive mathematical overkill to ensure safety.
                     if total_time - z.time_added > 1.5 then
 
-                        -- 0. Destroy Old Swapchain FIRST
-                        if z.old_sc_state then
-                            require("swapchain").Destroy(vk_rt.vk, vk_rt, z.old_sc_state)
-                            z.old_sc_state = nil
-                        end
+                        -- [REMOVE THE old_sc_state DESTRUCTION BLOCK ENTIRELY]
 
                         -- 1. Destroy Sync Primitives
                         if z.old_sync then
