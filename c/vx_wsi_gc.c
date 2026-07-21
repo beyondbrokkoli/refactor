@@ -27,20 +27,21 @@ EXPORT void vx_pump_zombie_gc(void) {
                     (_Atomic uint64_t*)&active_wsi->present_id_counter, memory_order_acquire);
 
                 if (current_present_id >= 2) {
-                    // [TIMEOUT 0]: Non-blocking query to prevent X11 kernel wedge
+                    // [TIMEOUT 0]: Non-blocking query
                     VkResult res = pfnWaitPresent(dev_ctx->device, active_wsi->swapchain, 2, 0);
                     if (res == VK_TIMEOUT) {
                         continue;
                     }
                 } else {
-                    // [THE DEADLOCK BREAKER]
-                    // We must declare the API getter so the compiler knows how to check the OS state
                     extern int vx_sys_get_resize_state(int win_id);
 
                     if (vx_sys_get_resize_state(wid) == 1) {
-                        // The active swapchain is OUT_OF_DATE because the user is still dragging!
-                        // It will NEVER reach present_id 2. X11 has already shattered the surface geometry.
-                        // We safely bypass the proxy wait to clear the graveyard and prevent pipeline starvation!
+                        // [THE CPU BLITZ SHOCK ABSORBER]
+                        // X11 is dragging. active_wsi is instantly failing, and the CPU just blitzed
+                        // the 10-frame countdown in a microsecond.
+                        // The GPU is physically still executing the zombie's command buffers.
+                        // We MUST sync the queue to let the GPU finish before dropping the hammer.
+                        vkQueueWaitIdle(dev_ctx->queue);
                     } else {
                         // Window might actually just be minimized or rendering slowly. Wait patiently.
                         continue;
