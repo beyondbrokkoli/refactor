@@ -420,8 +420,8 @@ local function main()
                 local graphics_mod = require("graphics_pipeline")
                 local renderer_mod = require("renderer")
 
-                -- [THE LOCK-FREE FIX] Drop the chain. We rely on the C-Core's vkWaitForPresentKHR to clean up.
-                local old_sc_handle = ffi.cast("VkSwapchainKHR", 0)
+                -- [THE LINUX SURFACE FIX] We MUST pass the old swapchain to satisfy X11
+                local old_sc_handle = tenant.sc and tenant.sc.handle or ffi.cast("VkSwapchainKHR", 0)
 
                 local new_sc = swapchain_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, old_sc_handle, WindowAPI.get_surface(win_id))
 
@@ -439,16 +439,11 @@ local function main()
                 -- [THE MATRIX DODGE]: Forge brand new semaphores for the new generation!
                 local new_sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, new_sc.imageCount)
 
-                -- [THE LOCK-FREE HANDSHAKE]
-                local true_zombie_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
-                local true_zombie = ffi.cast("VulkanSwapchainContext*", true_zombie_ptr)
-                true_zombie.status = 13
-
                 -- Queue the old Depth and Sync for GC!
                 if not tenant.zombies then tenant.zombies = {} end
                 table.insert(tenant.zombies, {
                     old_sync = tenant.sync,
-                    zombie_ctx = true_zombie, -- [THE FIX] Pass the pointer to the graveyard!
+                    zombie_ctx = inactive_wsi, -- [THE FIX] Reuse the already established pointer!
                     old_depth = {
                         image = tenant.gfx.depthImage,
                         view = tenant.gfx.depthImageView,
@@ -459,7 +454,7 @@ local function main()
 
                 -- Update Lua State
                 tenant.sc = new_sc
-                tenant.sync = new_sync -- [THE FIX] Bind the new semaphores
+                tenant.sync = new_sync
                 tenant.width = final_w
                 tenant.height = final_h
                 tenant.generation = next_gen
@@ -489,12 +484,6 @@ local function main()
                 WindowAPI.flip_wsi(win_id)
                 print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
                 tenant.wsi_state = 0
-
-                -- [THE LOCK-FREE HANDSHAKE]
-                -- Tell the C-Core to count down 10 frames and then vkQueueWaitIdle this old queue!
-                local true_zombie_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
-                local true_zombie = ffi.cast("VulkanSwapchainContext*", true_zombie_ptr)
-                true_zombie.status = 13
             end
 
             -- [PROCESS LUA-SIDE ZOMBIE GC]
