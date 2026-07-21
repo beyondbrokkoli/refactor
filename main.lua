@@ -418,9 +418,11 @@ local function main()
 
                 local swapchain_mod = require("swapchain")
                 local graphics_mod = require("graphics_pipeline")
-                local renderer_mod = require("renderer") -- [ADD THIS]
+                local renderer_mod = require("renderer")
 
-                local old_sc_handle = tenant.sc and tenant.sc.handle or ffi.cast("VkSwapchainKHR", 0)
+                -- [THE LOCK-FREE FIX] Drop the chain. We rely on the C-Core's vkWaitForPresentKHR to clean up.
+                local old_sc_handle = ffi.cast("VkSwapchainKHR", 0)
+
                 local new_sc = swapchain_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, old_sc_handle, WindowAPI.get_surface(win_id))
 
                 if not new_sc then
