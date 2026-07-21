@@ -1,27 +1,3 @@
-## Playing on Linux
-
-```
-sudo pacman -S luajit
-bin/boot.elf
-```
-
-## Building on Linux
-
-```
-sudo pacman -S luajit
-sudo pacman -S vulkan-headers
-lua build.lua linux
-```
-
-
-## Enabling validation layers
-
-```
-sudo pacman -S vulkan-validation-layers
-nano lua/config_gfx.lua # Set validation to 1
-```
-
-
 ## ⚙️ Runtime Controls
 
 | Key | Action | Description |
@@ -156,3 +132,4 @@ The viewport system provides fluid, RTS-style navigation while remaining entirel
 
 🖱️ Orthographic Edge Scrolling: The camera features an integrated edge-scrolling mechanic (toggled via F10), allowing seamless map navigation by clamping the cursor to the screen boundaries and translating it into world-space panning.
 🔭 Dynamic Zoom & Matrix Math: Utilizing a custom vmath library, the camera calculates orthographic projection and view matrices in real-time. It supports exponential zooming while maintaining strict aspect ratio corrections and precise raycasting for tile selection.
+

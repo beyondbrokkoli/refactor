@@ -125,14 +125,10 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
         queueCreateInfos[1].pQueuePriorities = queuePriority
     end
 
-    -- [INJECTION 1]: Append BOTH present extensions safely
-    local ext_count = #req_extensions + 2
+    local ext_count = #req_extensions
     local deviceExtensions = ffi.new("const char*[?]", ext_count)
     for i, ext in ipairs(req_extensions) do deviceExtensions[i-1] = ext end
-    deviceExtensions[ext_count - 2] = "VK_KHR_present_wait"
-    deviceExtensions[ext_count - 1] = "VK_KHR_present_id" -- The missing link
 
-    -- [EXISTING CHAIN]: Dynamic Rendering & Timeline Semaphores
     local dynamicRendering = ffi.new("VkPhysicalDeviceDynamicRenderingFeatures")
     ffi.fill(dynamicRendering, ffi.sizeof(dynamicRendering))
     dynamicRendering.sType = vk_struct.dynamic_rendering_features
@@ -152,25 +148,9 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
 
     local timelineFeat = ffi.new("VkPhysicalDeviceTimelineSemaphoreFeatures")
     ffi.fill(timelineFeat, ffi.sizeof(timelineFeat))
-    timelineFeat.sType = 1000207000
+    timelineFeat.sType = 1000207000 
     timelineFeat.timelineSemaphore = 1
     timelineFeat.pNext = extDynamicState2
-
-    -- [INJECTION 2]: Chain PresentId -> PresentWait -> Timeline
-    local presentIdFeat = ffi.new("VkPhysicalDevicePresentIdFeaturesKHR")
-    ffi.fill(presentIdFeat, ffi.sizeof(presentIdFeat))
-
-    -- [THE FIX]: Change 1000294000 to 1000294001
-    presentIdFeat.sType = 1000294001
-
-    presentIdFeat.presentId = 1
-    presentIdFeat.pNext = timelineFeat -- Link to the old timeline head
-
-    local presentWaitFeat = ffi.new("VkPhysicalDevicePresentWaitFeaturesKHR")
-    ffi.fill(presentWaitFeat, ffi.sizeof(presentWaitFeat))
-    presentWaitFeat.sType = 1000248000 -- VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR
-    presentWaitFeat.presentWait = 1
-    presentWaitFeat.pNext = presentIdFeat -- Link to the newly created Present ID feat
 
     local deviceFeatures = ffi.new("VkPhysicalDeviceFeatures")
     ffi.fill(deviceFeatures, ffi.sizeof(deviceFeatures))
@@ -180,9 +160,7 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     local deviceCreateInfo = ffi.new("VkDeviceCreateInfo")
     ffi.fill(deviceCreateInfo, ffi.sizeof(deviceCreateInfo))
     deviceCreateInfo.sType = vk_struct.device_create
-
-    -- Point the device info to the NEW head of the chain (Wait -> Id -> Timeline)
-    deviceCreateInfo.pNext = presentWaitFeat
+    deviceCreateInfo.pNext = timelineFeat
 
     deviceCreateInfo.queueCreateInfoCount = queueCount;
     deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
@@ -195,7 +173,7 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     assert(vk.vkCreateDevice(physicalDevice, deviceCreateInfo, nil, pDevice) == 0, "FATAL: vkCreateDevice failed!")
 
     vk_state.device = pDevice[0]
-    print("[LUA] Logical Device Created with VK_KHR_present_wait enabled!")
+    print("[LUA] Logical Device Created!")
 
     local pQueue = ffi.new("VkQueue[1]")
     vk.vkGetDeviceQueue(vk_state.device, qIndex, 0, pQueue)
@@ -204,13 +182,6 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     local pTransferQueue = ffi.new("VkQueue[1]")
     vk.vkGetDeviceQueue(vk_state.device, tIndex, 0, pTransferQueue)
     vk_state.transferQueue = pTransferQueue[0]
-
-    -- [INJECTION 3]: Extract the function pointer from the driver
-    local pfnWaitPresent = vk.vkGetDeviceProcAddr(vk_state.device, "vkWaitForPresentKHR")
-    if pfnWaitPresent == nil then
-        print("[WARNING] vkWaitForPresentKHR not found by driver!")
-    end
-    vk_state.pfnWaitForPresentKHR = pfnWaitPresent
 
     return vk_state
 end

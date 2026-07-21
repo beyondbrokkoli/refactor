@@ -4,7 +4,6 @@ ffi.cdef[[
 // C-Core Multi-Tenant Window & Input API
 void vx_sys_publish_instance(int win_id, void* instance);
 void vx_sys_set_cmd(int win_id, int cmd, int w, int h);
-int vx_sys_get_cmd(int win_id);
 void* vx_sys_get_surface(int win_id);
 int vx_sys_get_resize_state(int win_id);
 void vx_sys_window_size(int win_id, int* w, int* h);
@@ -36,16 +35,14 @@ void* vx_stream_packet(int idx);
 void vx_stream_commit(int win_id, int idx);
 
 void vx_thread_kill();
+void vx_stream_init(int win_id, void* wsi);
 void vx_thread_start();
 void vx_transfer_setup(uint32_t q_family_index);
 int vx_transfer_request(int win_id, uint64_t src, uint64_t dst, uint64_t size, uint64_t t_sem, uint64_t sig_val);
 
 // --- NEW VULKAN MULTI-TENANT & VALIDATION API ---
-uint32_t vx_sys_get_wsi_generation(int win_id);
-void* vx_sys_get_inactive_wsi_slot(int win_id);
-void vx_stream_allocate_tenant(int wid, void* dev_ctx, uint32_t gfx_family, uint32_t transfer_family);
-void vx_stream_init(int win_id, void* dev_ctx);
-
+void vx_stream_allocate_tenant(int wid, void* wsi, uint32_t gfx_family, uint32_t transfer_family);
+// -- void vx_record_commands(void* cmd, void* p, void* queue, uint32_t count, void* win_wsi);
 const char** vx_sys_glfw_extensions(uint32_t* count);
 void vx_sys_inject_validation(void* instance_ptr);
 void vx_sys_eject_validation(void* instance);
@@ -71,79 +68,5 @@ typedef struct {
 } VkPhysicalDeviceTimelineSemaphoreFeatures;
 
 ]]
-
-local cfg_sim = require("config_sim")
-local total_tiles = cfg_sim.world.map_width * cfg_sim.world.map_height
-local is_windows = (ffi.os == "Windows")
-
-if is_windows then
-    ffi.cdef[[
-        void* _aligned_malloc(size_t size, size_t alignment);
-        void _aligned_free(void* ptr);
-    ]]
-else
-    ffi.cdef[[
-        void* aligned_alloc(size_t alignment, size_t size);
-        void free(void* ptr);
-    ]]
-end
-
-ffi.cdef(string.format([[
-// --- Network API ---
-int vx_net_host(int port);
-int vx_net_connect(uint8_t peer_id, const char* ip, int port);
-void vx_net_set_session(uint64_t token);
-void vx_net_set_player_id(uint8_t id);
-int vx_net_recv_all(void* out_buffer, int max_count);
-void vx_net_send_to(void* data, size_t len, uint8_t target_peer);
-void vx_net_set_relay_ip(const char* ip);
-uint32_t vx_net_hash_state(const void* data, size_t length, uint32_t initial_hash);
-int vx_net_stun_punch(const char* stun_server_ip, int stun_port, char* out_ip, int* out_port);
-void vx_net_shutdown(void);
-
-// This is required for VK_KHR_present_wait
-typedef struct VkPhysicalDevicePresentIdFeaturesKHR {
-    int sType;
-    void* pNext;
-    uint32_t presentId; // VkBool32
-} VkPhysicalDevicePresentIdFeaturesKHR;
-
-// Enabling VK_KHR_present_wait
-typedef struct VkPhysicalDevicePresentWaitFeaturesKHR {
-    int sType;
-    void* pNext;
-    uint32_t presentWait; // VkBool32
-} VkPhysicalDevicePresentWaitFeaturesKHR;
-
-typedef struct VkPresentIdKHR {
-    int sType;
-    const void* pNext;
-    uint32_t swapchainCount;
-    const uint64_t* pPresentIds;
-} VkPresentIdKHR;
-
-// The function pointer signature for the C-Core
-typedef int (*PFN_vkWaitForPresentKHR)(void* device, void* swapchain, uint64_t presentId, uint64_t timeout);
-
-// --- Universal Input Getter ---
-int vx_input_is_key_down(int win_id, int key);
-
-// --- Memory & Vulkan Timeline Semaphores ---
-typedef struct {
-    uint32_t sType;
-    void* pNext;
-    uint32_t semaphoreType;
-    uint64_t initialValue;
-} VkSemaphoreTypeCreateInfo;
-
-int vkGetSemaphoreCounterValue(void* device, void* semaphore, uint64_t* pValue);
-
-// --- Game State (Dynamic Dimensioning SSoT) ---
-typedef struct {
-    uint16_t terrain[8][%d];
-    int32_t elevation[8][%d];
-    uint32_t rng_state[1];
-} GameState;
-]], total_tiles, total_tiles))
 
 return ffi.C

@@ -6,8 +6,8 @@ local shaders = {
     { src = "glsl/render.frag",       dst = "bin/render_frag.spv" },
 }
 
--- The newly crystallized domain files (Tier 1 through Tier 5)
-local C_SOURCES = "c/vx_memory_ring.c c/vx_mailbox.c c/vx_thread_utils.c c/vx_glfw_window.c c/vx_glfw_input.c c/vx_glfw_events.c c/vx_vk_core.c c/vx_vk_cmd.c c/vx_wsi_state.c c/vx_wsi_gc.c c/vx_multiplexer.c c/main.c"
+-- The newly crystallized domain files
+local C_SOURCES = "c/vx_global_state.c c/vx_glfw_multiplexer.c c/vx_vulkan_core.c c/vx_vulkan_render.c c/main.c"
 
 local function copy_file(source, destination)
     local infile = io.open(source, "rb")

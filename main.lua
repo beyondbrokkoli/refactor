@@ -154,35 +154,35 @@ local function main()
     )
 
     -- 2. Boot Tenant 1 (Editor)
---    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
---    TenantRegistry.active[1].gfx = graphics_mod.Init(
---        vk_rt.vk, vk_rt,
---        800, 600,
---        desc.pipelineLayout,
---        TenantRegistry.active[1].sc.format,
---        manifest.graphics
---    )
+    TenantRegistry.boot_tenant(vk_rt, 1, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[1].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[1].sc.format,
+        manifest.graphics
+    )
 
     -- 3. Boot Tenant 2 (Reverse-Z Analytics)
---    TenantRegistry.boot_tenant(vk_rt, 2, 800, 600, cfg_gfx.cfg.frame_slots)
---    TenantRegistry.active[2].gfx = graphics_mod.Init(
---        vk_rt.vk, vk_rt,
---        800, 600,
---        desc.pipelineLayout,
---        TenantRegistry.active[2].sc.format,
---        manifest.graphics
---    )
+    TenantRegistry.boot_tenant(vk_rt, 2, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[2].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[2].sc.format,
+        manifest.graphics
+    )
 
     -- (Optional) Boot Tenant 3 if you need it right away
     -- 4. Boot Tenant 3
---    TenantRegistry.boot_tenant(vk_rt, 3, 800, 600, cfg_gfx.cfg.frame_slots)
---    TenantRegistry.active[3].gfx = graphics_mod.Init(
---        vk_rt.vk, vk_rt,
---        800, 600,
---        desc.pipelineLayout,
---        TenantRegistry.active[3].sc.format,
---        manifest.graphics
---    )
+    TenantRegistry.boot_tenant(vk_rt, 3, 800, 600, cfg_gfx.cfg.frame_slots)
+    TenantRegistry.active[3].gfx = graphics_mod.Init(
+        vk_rt.vk, vk_rt,
+        800, 600,
+        desc.pipelineLayout,
+        TenantRegistry.active[3].sc.format,
+        manifest.graphics
+    )
 
     print("[LUA CO] Multi-Tenant Registry Online.")
 
@@ -315,31 +315,12 @@ local function main()
         for w_id, tnt in pairs(TenantRegistry.active) do
             if WindowAPI.get_last_key(w_id) == cfg_gfx.key.esc then
                 if not tnt.kill_state then
-                    print(string.format("[LUA CO] Intercepted close request for Tenant %d. Initiating Zombie Teardown V2...", w_id))
+                    print(string.format("[LUA CO] Intercepted close request for Tenant %d. Initiating Teardown...", w_id))
                     tnt.suspended = true
                     tnt.kill_state = 1
                     tnt.kill_wait = 0
-
-                    -- 1. STRICT GC ISOLATION: Dedicated Teardown Queue
-                    if not tnt.teardown_zombies then tnt.teardown_zombies = {} end
-                    table.insert(tnt.teardown_zombies, {
-                        gfx = tnt.gfx,
-                        sync = tnt.sync,
-                        sc = tnt.sc,
-                        surface = WindowAPI.get_surface(w_id),
-                        time_added = total_time,
-                        pool_purged = false, -- NEW: Track the C-Core pool reset
-                        logic_purged = false
-                    })
-
-                    -- 2. Nullify primary pointers so main render loop and shutdown skip them
-                    tnt.gfx = nil
-                    tnt.sync = nil
-                    tnt.sc = nil -- [CRITICAL FIX]
-                    if WindowAPI.set_surface then WindowAPI.set_surface(w_id, nil) end
-
-                    -- 3. Fire CMD_TEARDOWN_WSI (6) for the lock-free C-Core severance
-                    ffi.C.vx_sys_set_cmd(w_id, 6, 0, 0)
+                    -- Phase 1: Force Render Thread to idle GPU and abandon tenant
+                    WindowAPI.trigger_wsi_rebuild(w_id)
                 end
             end
         end
@@ -385,232 +366,125 @@ local function main()
                 ffi.C.vx_sys_dump_ring_state(win_id);
             end
 
-            -- [ZOMBIE PROTOCOL: ASYNC RESIZE STATE MACHINE]
-            if tenant.wsi_state == 0 then
-                -- STATE 0: IDLE (Detect Resize & Fire Command)
-                if WindowAPI.get_resize_state(win_id) then
+            -- [PHASE-GATE DYNAMIC TEARDOWN]
+            if tenant.kill_state == 1 then
+                -- [OMNISCIENCE CHECK] No more frame counting. We poll the exact atomic state.
+                if WindowAPI.is_tenant_idle(win_id) == 1 then
+                    print(string.format("[LUA CO] Tenant %d: C-Core confirmed IDLE. Destroying Vulkan objects...", win_id))
 
-                    -- [THE BRILLIANT "CHEAT": DEFERRED RESIZE]
-                    -- 0 is typically the Left Mouse Button. Adjust to your API.
-                    -- If the user is actively dragging the window border, DO NOT rebuild!
-                    -- Let X11 stretch the existing swapchain buffer temporarily.
-                    if WindowAPI.is_mouse_down(win_id, 0) then
-                        -- The user is doing a chaotic drag.
-                        -- Do nothing. Wait for them to let go!
-                    else
-                        -- The mouse is released, OR it was an instant snap (AwesomeWM).
-                        -- We are clear to perform a single, pristine swapchain rebuild.
-                        local new_w, new_h = WindowAPI.get_window_size(win_id)
-                        if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
+                    local swapchain_mod = require("swapchain")
+                    local graphics_mod = require("graphics_pipeline")
+                    local renderer_mod = require("renderer")
 
-                            local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
-                            local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
+                    graphics_mod.Destroy(vk_rt.vk, vk_rt, tenant.gfx)
+                    renderer_mod.Destroy(vk_rt.vk, vk_rt.device, tenant.sync)
+                    swapchain_mod.Destroy(vk_rt.vk, vk_rt, tenant.sc)
 
-                            if inactive_wsi.status == 0 then
-                                print(string.format("[LUA FSM] Tenant %d: Drag finished. Firing CMD 4...", win_id))
-                                tenant.target_w = new_w
-                                tenant.target_h = new_h
-                                WindowAPI.prepare_new_wsi(win_id, new_w, new_h)
-                                tenant.wsi_state = 1
-                            end
-                        end
+                    local surface_ptr = WindowAPI.get_surface(win_id)
+                    if surface_ptr ~= nil then
+                        local vk_surface = ffi.cast("VkSurfaceKHR", surface_ptr)
+                        vk_rt.vk.vkDestroySurfaceKHR(vk_rt.instance, vk_surface, nil)
+                    end
+
+                    -- Phase 2: Issue CMD_KILL_WINDOW to Main Thread
+                    ffi.C.vx_sys_set_cmd(win_id, cfg_gfx.sys.kill, 0, 0)
+                    tenant.kill_state = 2
+                end
+                goto continue_tenant
+
+            elseif tenant.kill_state == 2 then
+                -- Poll until the OS window pointer is actually nullified by C
+                if WindowAPI.get_surface(win_id) == nil and WindowAPI.is_tenant_idle(win_id) == 1 then
+                    print(string.format("[LUA CO] Tenant %d: OS Window destroyed. Slot freed.", win_id))
+                    TenantRegistry.active[win_id] = nil
+
+                    -- [GLOBAL SHUTDOWN CHECK]
+                    local active_count = 0
+                    for _ in pairs(TenantRegistry.active) do active_count = active_count + 1 end
+                    if active_count == 0 then
+                        print("[LUA CO] All tenants dismantled. Commencing global shutdown...")
+                        EngineAPI.shutdown()
                     end
                 end
+                goto continue_tenant
+            end
 
-            elseif tenant.wsi_state == 1 then
-                -- STATE 1: WAITING_FOR_MEMSET (Poll for CMD_IDLE)
-                if WindowAPI.get_cmd_state(win_id) == 0 then
-                    print(string.format("[LUA FSM] Tenant %d: Memory zeroed. Transitioning to Build phase...", win_id))
-                    tenant.wsi_state = 2
-                end
+            -- [EXISTING RESIZE LOGIC]
+            if WindowAPI.get_resize_state(win_id) and not tenant.suspended then
+                WindowAPI.trigger_wsi_rebuild(win_id);
+                tenant.suspended = true;
+                goto continue_tenant;
+            end
 
-            elseif tenant.wsi_state == 2 then
-                -- STATE 2: BUILDING_WSI (Construct & Flip)
-                local new_w, new_h = tenant.target_w, tenant.target_h
-
-                local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
-                local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
-                local current_gen = ffi.C.vx_sys_get_wsi_generation(win_id)
-                local next_gen = current_gen + 1
-
-                local swapchain_mod = require("swapchain")
-                local graphics_mod = require("graphics_pipeline")
-                local renderer_mod = require("renderer")
-
-                -- [THE LINUX SURFACE FIX] We MUST pass the old swapchain to satisfy X11
-                local old_sc_handle = tenant.sc and tenant.sc.handle or ffi.cast("VkSwapchainKHR", 0)
-
-                local new_sc = swapchain_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, old_sc_handle, WindowAPI.get_surface(win_id))
-
-                if not new_sc then
-                    print(string.format("[LUA FSM] Tenant %d: Swapchain creation failed. Aborting rebuild.", win_id))
-                    tenant.wsi_state = 0
+            if tenant.suspended then
+                if WindowAPI.get_resize_state(win_id) then
+                    WindowAPI.trigger_wsi_rebuild(win_id)
                     goto continue_tenant
                 end
 
-                local final_w = new_sc.extent.width
-                local final_h = new_sc.extent.height
+                local new_w, new_h = WindowAPI.get_window_size(win_id)
 
-                local new_depth = graphics_mod.BuildDepth(vk_rt.vk, vk_rt, final_w, final_h)
+                if new_w > 0 and new_h > 0 then
+                    print(string.format("[LUA CO] Tenant %d: GPU Idled. Executing WSI Rebuild...", win_id))
+                    tenant.width, tenant.height = new_w, new_h
+                    tenant.suspended = false
 
-                -- [THE MATRIX DODGE]: Forge brand new semaphores for the new generation!
-                local new_sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, new_sc.imageCount)
+                    local swapchain_mod = require("swapchain")
+                    local graphics_mod = require("graphics_pipeline")
+                    local renderer_mod = require("renderer")
 
-                -- Queue the old Depth and Sync for GC!
-                if not tenant.zombies then tenant.zombies = {} end
-                table.insert(tenant.zombies, {
-                    old_sync = tenant.sync,
-                    zombie_ctx = inactive_wsi, -- [THE FIX] Reuse the already established pointer!
-                    old_depth = {
-                        image = tenant.gfx.depthImage,
-                        view = tenant.gfx.depthImageView,
-                        mem = tenant.gfx.depthMemory
-                    },
-                    time_added = total_time
-                })
+                    graphics_mod.Destroy(vk_rt.vk, vk_rt, tenant.gfx)
+                    renderer_mod.Destroy(vk_rt.vk, vk_rt.device, tenant.sync)
 
-                -- Update Lua State
-                tenant.sc = new_sc
-                tenant.sync = new_sync
-                tenant.width = final_w
-                tenant.height = final_h
-                tenant.generation = next_gen
+                    local old_sc_handle = tenant.sc.handle
 
-                -- Hot-swap the live engine state!
-                tenant.gfx.depthImage = new_depth.image
-                tenant.gfx.depthMemory = new_depth.memory
-                tenant.gfx.depthImageView = new_depth.view
-
-                inactive_wsi.swapchain = tenant.sc.handle
-                inactive_wsi.status = 1
-
-                -- 1. Map the Physical Images (Strictly bounded to prevent garbage reads)
-                local max_images = math.min(tenant.sc.imageCount, 10)
-                for i = 0, max_images - 1 do
-                    inactive_wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
-                    inactive_wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
-                end
-
-                -- 2. Map the Sync Primitives (Always 10 to feed the floating pool)
-                for i = 0, 9 do
-                    inactive_wsi.image_available[i]  = tenant.sync.imageAvailable[i]
-                    inactive_wsi.render_finished[i]  = tenant.sync.renderFinished[i]
-                    inactive_wsi.in_flight[i]        = tenant.sync.inFlight[i]
-                end
-
-                WindowAPI.flip_wsi(win_id)
-                print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
-                tenant.wsi_state = 0
-
-                -- [THE EASY WAY]
-                -- Flag the old WSI for immediate destruction by the C-Core GC.
-                local true_zombie_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
-                local true_zombie = ffi.cast("VulkanSwapchainContext*", true_zombie_ptr)
-
-                -- Skip 13. Skip the countdown. Send it straight to the executioner!
-                true_zombie.status = 2
-            end
-
-            -- [PROCESS LUA-SIDE ZOMBIE GC]
-            if tenant.zombies and #tenant.zombies > 0 then
-                local survivor_zombies = {}
-                for _, z in ipairs(tenant.zombies) do
-
-                    -- [THE HOLY GRAIL] Wait for C-Core to officially reach status == 0.
-                    -- If the user drags for 10 seconds, this patiently waits. No freezes!
-                    if z.zombie_ctx and z.zombie_ctx.status == 0 then
-
-                        -- 1. Destroy Sync Primitives
-                        if z.old_sync then
-                            for i = 0, z.old_sync.safe_frames - 1 do
-                                if ffi.cast("uint64_t", z.old_sync.imageAvailable[i]) ~= 0 then
-                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.imageAvailable[i], nil)
-                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.old_sync.renderFinished[i], nil)
-                                    vk_rt.vk.vkDestroyFence(vk_rt.device, z.old_sync.inFlight[i], nil)
-                                end
-                            end
-                        end
-
-                        -- 2. Destroy Depth Buffer
-                        if z.old_depth and ffi.cast("uint64_t", z.old_depth.view) ~= 0 then
-                            vk_rt.vk.vkDestroyImageView(vk_rt.device, z.old_depth.view, nil)
-                            vk_rt.vk.vkDestroyImage(vk_rt.device, z.old_depth.image, nil)
-                            vk_rt.vk.vkFreeMemory(vk_rt.device, z.old_depth.mem, nil)
-                            z.old_depth.view = ffi.cast("VkImageView", 0) 
-                        end
-
-                        print("[LUA GC] Ghost Generation purged safely (Queue officially idle).")
-                    else
-                        table.insert(survivor_zombies, z)
-                    end
-                end
-                tenant.zombies = survivor_zombies
-            end
-
-            -- [V2 GHOST TOWN TEARDOWN GC LOOP]
-            if tenant.teardown_zombies and #tenant.teardown_zombies > 0 then
-                local survivor_teardowns = {}
-                for _, z in ipairs(tenant.teardown_zombies) do
-                    local age = total_time - z.time_added
-
-                    -- Phase 0.5 (1.0 Seconds): Tell C-Core to reset the command pools
-                    if age > 1.0 and not z.pool_purged then
-                        ffi.C.vx_sys_set_cmd(win_id, 3, 0, 0)
-                        z.pool_purged = true
-                        print(string.format("[LUA GC] Tenant %d: Fired CMD 3 to purge C-Core Command Pools.", win_id))
+                    for i = 0, tenant.sc.imageCount - 1 do
+                        vk_rt.vk.vkDestroyImageView(vk_rt.device, tenant.sc.imageViews[i], nil)
                     end
 
-                    -- Phase 1: Wait for Handshake!
-                    -- [THE FIX] Must verify CMD 3 is complete (get_cmd_state == 0) before destroying!
-                    if z.pool_purged and not z.logic_purged and WindowAPI.get_cmd_state(win_id) == 0 then
+                    tenant.sc = swapchain_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, old_sc_handle, WindowAPI.get_surface(win_id))
+                    tenant.gfx = graphics_mod.Init(vk_rt.vk, vk_rt, new_w, new_h, desc.pipelineLayout, tenant.sc.format, manifest.graphics)
 
-                        if z.sync then
-                            for i = 0, z.sync.safe_frames - 1 do
-                                if ffi.cast("uint64_t", z.sync.imageAvailable[i]) ~= 0 then
-                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.imageAvailable[i], nil)
-                                    vk_rt.vk.vkDestroySemaphore(vk_rt.device, z.sync.renderFinished[i], nil)
-                                    vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
+                    tenant.sync = renderer_mod.InitSync(vk_rt.vk, vk_rt.device, tenant.sc.imageCount)
 
-                                    z.sync.imageAvailable[i] = ffi.cast("VkSemaphore", 0)
-                                    z.sync.renderFinished[i] = ffi.cast("VkSemaphore", 0)
-                                    z.sync.inFlight[i] = ffi.cast("VkFence", 0)
-                                end
-                            end
-                        end
+                    vk_rt.vk.vkDestroySwapchainKHR(vk_rt.device, old_sc_handle, nil)
 
-                        if z.gfx then require("graphics_pipeline").Destroy(vk_rt.vk, vk_rt, z.gfx) end
-                        z.logic_purged = true
-                        print(string.format("[LUA GC] Tenant %d: Teardown Phase 1 (Logical Purge) complete.", win_id))
+                    local wsi = ffi.new("RenderThreadInit")
+                    wsi.device = vk_rt.device
+                    wsi.queue = vk_rt.queue
+                    wsi.transfer_queue = vk_rt.transferQueue
+                    wsi.swapchain = tenant.sc.handle
+                    wsi.max_frames_in_flight = tenant.sc.imageCount
+
+                    for i = 0, tenant.sc.imageCount - 1 do
+                        wsi.swapchain_images[i] = ffi.cast("uint64_t", tenant.sc.images[i])
+                        wsi.swapchain_views[i]  = ffi.cast("uint64_t", tenant.sc.imageViews[i])
                     end
 
-                    -- Phase 2 (2.5 Seconds): Physical WSI, Surface & OS Window destruction
-                    if age > 2.5 then
-                        if z.sc then require("swapchain").Destroy(vk_rt.vk, vk_rt, z.sc) end
-                        if z.surface then
-                            local vk_surface = ffi.cast("VkSurfaceKHR", z.surface)
-                            vk_rt.vk.vkDestroySurfaceKHR(vk_rt.instance, vk_surface, nil)
-                        end
-
-                        ffi.C.vx_sys_set_cmd(win_id, 2, 0, 0)
-                        print(string.format("[LUA GC] Tenant %d: Teardown Phase 2 (OS Window & Surface) purged.", win_id))
-
-                        TenantRegistry.active[win_id] = nil
-
-                        local active_count = 0
-                        for _ in pairs(TenantRegistry.active) do active_count = active_count + 1 end
-                        if active_count == 0 then
-                            print("[LUA CO] All tenants dismantled. Commencing global shutdown...")
-                            EngineAPI.shutdown()
-                        end
-                    else
-                        table.insert(survivor_teardowns, z)
+                    for i = 0, tenant.sc.imageCount - 1 do
+                        wsi.image_available[i] = tenant.sync.imageAvailable[i]
+                        wsi.render_finished[i] = tenant.sync.renderFinished[i]
+                        wsi.in_flight[i]       = tenant.sync.inFlight[i]
                     end
+
+                    local vk, dev = vk_rt.vk, vk_rt.device
+                    wsi.vkWaitForFences = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkWaitForFences"))
+                    wsi.vkAcquireNextImageKHR = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkAcquireNextImageKHR"))
+                    wsi.vkResetFences = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkResetFences"))
+                    wsi.vkQueueSubmit = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkQueueSubmit"))
+                    wsi.vkQueuePresentKHR = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkQueuePresentKHR"))
+                    wsi.pfnBegin = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkCmdBeginRenderingKHR"))
+                    wsi.pfnEnd = ffi.cast("void*", vk.vkGetDeviceProcAddr(dev, "vkCmdEndRenderingKHR"))
+                    wsi.pfnSetCullMode = vk.vkGetDeviceProcAddr(dev, "vkCmdSetCullModeEXT")
+                    wsi.pfnSetFrontFace = vk.vkGetDeviceProcAddr(dev, "vkCmdSetFrontFaceEXT")
+                    wsi.pfnSetPrimitiveTopology = vk.vkGetDeviceProcAddr(dev, "vkCmdSetPrimitiveTopologyEXT")
+                    wsi.pfnSetDepthTestEnable = vk.vkGetDeviceProcAddr(dev, "vkCmdSetDepthTestEnableEXT")
+                    wsi.pfnSetDepthWriteEnable = vk.vkGetDeviceProcAddr(dev, "vkCmdSetDepthWriteEnableEXT")
+                    wsi.pfnSetDepthCompareOp = vk.vkGetDeviceProcAddr(dev, "vkCmdSetDepthCompareOpEXT")
+
+                    EngineAPI.init_stream(win_id, wsi);
+                    print(string.format("[LUA CO] Tenant %d: WSI Stream Resumed.", win_id))
                 end
-                tenant.teardown_zombies = survivor_teardowns
-            end
-
-            -- Bypass frame packing entirely for dead, dying, or broken tenants
-            if tenant.kill_state or tenant.suspended or tenant.sc == nil or tenant.gfx == nil then
                 goto continue_tenant
             end
 
@@ -642,14 +516,37 @@ local function main()
 
     print("\n[LUA IO] Render Loop Terminated. Commencing Teardown...")
 
-    -- 1. THE TRUE MASTERSTROKE: Kill and join the C-Threads FIRST.
-    -- This natively calls vkDeviceWaitIdle AND vkDestroyCommandPool, instantly dropping
-    -- all "in use" references so Lua can safely destroy the objects without validation errors.
-    print("[LUA IO] Sending Kill Signal to Async Overlords...")
-    EngineAPI.kill_thread()
-    print("[LUA IO] Threads Joined, Devices Idled & Command Pools Purged.")
+    -- 1. THE MASTERSTROKE: Leverage our proven Phase-Gate isolation!
+    -- Send CMD_REBUILD_WSI to all remaining tenants to force the Render Thread
+    -- to idle the GPU, explicitly reset the command pools, and isolate itself.
+    for win_id, tenant in pairs(TenantRegistry.active) do
+        WindowAPI.trigger_wsi_rebuild(win_id)
+    end
 
-    -- 2. We can now safely destroy the Vulkan objects in Lua!
+    -- 2. THE OMNISCIENCE POLL: Deterministic atomic polling replaces the magic wait.
+    print("[LUA IO] Waiting for C-Core Render Multiplexer to acknowledge teardown...")
+    local all_idle = false
+    while not all_idle do
+        all_idle = true
+        for win_id, _ in pairs(TenantRegistry.active) do
+            if WindowAPI.is_tenant_idle(win_id) == 0 then
+                all_idle = false
+                break
+            end
+        end
+
+        -- Yield briefly to the OS thread scheduler so C-Core can finalize its work
+        if not all_idle then
+            sys_sleep(1)
+        end
+    end
+    print("[LUA IO] Absolute C-Core Idle Confirmed.")
+
+    -- Ensure the device is absolutely quiet. (Now completely safe to call)
+    vk_rt.vk.vkDeviceWaitIdle(vk_rt.device)
+
+    -- 3. Now the Render Thread has cleanly abandoned the tenants and reset the pools.
+    -- We can safely destroy the Vulkan objects in Lua without Validation Layer panic!
     local graphics_mod = require("graphics_pipeline")
     local renderer_mod = require("renderer")
     local swapchain_mod = require("swapchain")
@@ -657,38 +554,9 @@ local function main()
     for win_id, tenant in pairs(TenantRegistry.active) do
         print(string.format("[TEARDOWN] Purging Remaining Tenant %d...", win_id))
 
-        if tenant.zombies then
-            for _, z in ipairs(tenant.zombies) do
-                if z.gfx then graphics_mod.Destroy(vk_rt.vk, vk_rt, z.gfx) end
-                if z.sync then
-                    for i = 0, z.sync.safe_frames - 1 do
-                        vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
-                    end
-                end
-            end
-            tenant.zombies = {}
-        end
-
-        if tenant.teardown_zombies then
-            for _, z in ipairs(tenant.teardown_zombies) do
-                if z.gfx then graphics_mod.Destroy(vk_rt.vk, vk_rt, z.gfx) end
-                if z.sync then
-                    for i = 0, z.sync.safe_frames - 1 do
-                        vk_rt.vk.vkDestroyFence(vk_rt.device, z.sync.inFlight[i], nil)
-                    end
-                end
-                if z.sc then swapchain_mod.Destroy(vk_rt.vk, vk_rt, z.sc) end
-                if z.surface then
-                    local vk_surface = ffi.cast("VkSurfaceKHR", z.surface)
-                    vk_rt.vk.vkDestroySurfaceKHR(vk_rt.instance, vk_surface, nil)
-                end
-            end
-            tenant.teardown_zombies = {}
-        end
-
-        if tenant.gfx then graphics_mod.Destroy(vk_rt.vk, vk_rt, tenant.gfx) end
-        if tenant.sync then renderer_mod.Destroy(vk_rt.vk, vk_rt.device, tenant.sync) end
-        if tenant.sc then swapchain_mod.Destroy(vk_rt.vk, vk_rt, tenant.sc) end
+        graphics_mod.Destroy(vk_rt.vk, vk_rt, tenant.gfx)
+        renderer_mod.Destroy(vk_rt.vk, vk_rt.device, tenant.sync)
+        swapchain_mod.Destroy(vk_rt.vk, vk_rt, tenant.sc)
 
         local surface_ptr = WindowAPI.get_surface(win_id)
         if surface_ptr ~= nil then
@@ -696,10 +564,14 @@ local function main()
             vk_rt.vk.vkDestroySurfaceKHR(vk_rt.instance, vk_surface, nil)
         end
 
-        if WindowAPI.destroy then WindowAPI.destroy(win_id) end
+        WindowAPI.destroy(win_id)
     end
 
-    -- 3. Destroy the Global / Shared Engine State
+    -- 4. NOW kill the C-Core threads. Since the pools were already cleanly reset,
+    -- destroying them natively here will be completely silent.
+    EngineAPI.kill_thread()
+
+    -- 5. Destroy the Global / Shared Engine State
     require("compute_pipeline").Destroy(vk_rt.vk, vk_rt, engine_ctx.comp_state)
     require("descriptors").Destroy(vk_rt.vk, vk_rt.device, desc)
 
@@ -711,7 +583,7 @@ local function main()
     net.Shutdown()
     memory.DestroyTransferSubsystem(vk_rt)
 
-    -- 4. Shut down the core Vulkan Instance and Device
+    -- 6. Shut down the core Vulkan Instance and Device
     require("vulkan_core").Destroy(vk_rt, cfg_gfx.cfg)
     print("[LUA IO] Teardown Complete. Safe Exit.")
 end
