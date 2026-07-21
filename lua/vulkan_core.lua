@@ -159,7 +159,10 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     -- [INJECTION 2]: Chain PresentId -> PresentWait -> Timeline
     local presentIdFeat = ffi.new("VkPhysicalDevicePresentIdFeaturesKHR")
     ffi.fill(presentIdFeat, ffi.sizeof(presentIdFeat))
-    presentIdFeat.sType = 1000294000 -- VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR
+
+    -- [THE FIX]: Change 1000294000 to 1000294001
+    presentIdFeat.sType = 1000294001
+
     presentIdFeat.presentId = 1
     presentIdFeat.pNext = timelineFeat -- Link to the old timeline head
 
