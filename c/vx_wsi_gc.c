@@ -24,15 +24,15 @@ EXPORT void vx_pump_zombie_gc(void) {
                 extern int vx_sys_get_resize_state(int win_id);
 
                 // 1. [THE HOISTED SHOCK ABSORBER]
-                // If X11 is actively tearing the geometry, the active WSI is compromised.
-                // Its frames might be swallowed by the void. We cannot trust the compositor
-                // to signal presentId 2. Sync the queue and smash the zombie.
                 if (vx_sys_get_resize_state(wid) == 1) {
-                    vkQueueWaitIdle(dev_ctx->queue);
+                    // X11 is actively tearing the geometry.
+                    // Bypass the proxy wait and drop the hammer!
+                    // (vkQueueWaitIdle removed to prevent Thread Collisions!)
                 }
                 // 2. Window is stable. We can safely trust the OS Compositor handshake.
                 else {
                     PFN_vkWaitForPresentKHR pfnWaitPresent = (PFN_vkWaitForPresentKHR)dev_ctx->pfnWaitForPresentKHR;
+                    // ... (keep the rest of your normal proxy wait logic here) ...
                     uint64_t current_present_id = atomic_load_explicit(
                         (_Atomic uint64_t*)&active_wsi->present_id_counter, memory_order_acquire);
 

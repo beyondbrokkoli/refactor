@@ -324,8 +324,15 @@ static THREAD_FUNC render_thread_loop(void* arg) {
             if (z_status > 3) {
                 atomic_fetch_sub_explicit((_Atomic uint32_t*)&zombie->status, 1, memory_order_relaxed);
             } else if (z_status == 3) {
-                // 10 packets consumed = fences waited on 3+ times. GPU is mathematically done.
-                // NO vkQueueWaitIdle required. The Matrix Dodge (floating semaphores) protects us!
+
+                // [THE THREAD-SAFE SHOCK ABSORBER]
+                // If X11 is tearing the window, the OS won't properly signal the Proxy Wait.
+                // We MUST sync the queue to satisfy the Validation Layers before the GC drops the hammer.
+                // Doing it here on the Render Thread completely prevents Thread Collisions!
+                if (L(g_engine.mailbox.tenants[wid].window_resized) == 1) {
+                    vkQueueWaitIdle(dev_ctx->queue);
+                }
+
                 atomic_store_explicit((_Atomic uint32_t*)&zombie->status, 2, memory_order_release);
             }
 
