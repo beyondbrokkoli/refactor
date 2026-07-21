@@ -14,6 +14,24 @@ EXPORT void vx_pump_zombie_gc(void) {
         if (status == 2) {
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
 
+            // [THE VVL SCALPEL] Ask the GPU natively if the queue is still using these images!
+            bool gpu_busy = false;
+            for (int i = 0; i < 10; i++) {
+                VkFence f = zombie->images_in_flight_fences[i];
+                if (f != VK_NULL_HANDLE) {
+                    if (vkGetFenceStatus(dev_ctx->device, f) == VK_NOT_READY) {
+                        gpu_busy = true;
+                        break;
+                    }
+                }
+            }
+
+            // If the GPU is still munching on the zombie frames, abort the GC.
+            // We will check again on the next main loop iteration. No blocking!
+            if (gpu_busy) {
+                continue;
+            }
+
             for (int i = 0; i < 10; i++) {
                 if (zombie->swapchain_views[i] != 0) {
                     vkDestroyImageView(dev_ctx->device, (VkImageView)zombie->swapchain_views[i], NULL);

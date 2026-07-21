@@ -500,9 +500,9 @@ local function main()
                 local survivor_zombies = {}
                 for _, z in ipairs(tenant.zombies) do
 
-                    -- [THE HOLY GRAIL] Wait for C-Core to officially reach status == 2.
+                    -- [THE HOLY GRAIL] Wait for C-Core to officially reach status == 0.
                     -- If the user drags for 10 seconds, this patiently waits. No freezes!
-                    if z.zombie_ctx and z.zombie_ctx.status == 2 then
+                    if z.zombie_ctx and z.zombie_ctx.status == 0 then
 
                         -- 1. Destroy Sync Primitives
                         if z.old_sync then
