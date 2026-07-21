@@ -213,7 +213,7 @@ static THREAD_FUNC render_thread_loop(void* arg) {
 
             VkFence immortal_fence = g_render_fences[wid][current_frame];
             PFN_vkWaitForFences pfnWait = (PFN_vkWaitForFences)dev_ctx->vkWaitForFences;
-            if (pfnWait(dev_ctx->device, 1, &immortal_fence, VK_TRUE, UINT64_MAX) == VK_TIMEOUT) {
+            if (pfnWait(dev_ctx->device, 1, &immortal_fence, VK_TRUE, 2000000000) == VK_TIMEOUT) {
                 printf("[C-WARN] Tenant %d: GPU Fence Timeout (CPU Starvation).\n", wid);
                 goto frame_done;
             }
@@ -239,7 +239,6 @@ static THREAD_FUNC render_thread_loop(void* arg) {
                 5000000, win_wsi->image_available[current_frame], VK_NULL_HANDLE, &img_idx);
 
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
-
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
                 SLEEP_MS(10);
