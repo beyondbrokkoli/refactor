@@ -292,6 +292,21 @@ static THREAD_FUNC render_thread_loop(void* arg) {
                 .pImageIndices      = &img_idx
             };
 
+            // 1. Generate unique monotonic present ID
+            uint64_t current_present_id = atomic_fetch_add_explicit(
+                (_Atomic uint64_t*)&win_wsi->present_id_counter, 1, memory_order_relaxed) + 1;
+
+            win_wsi->last_present_id = current_present_id;
+
+            // 2. Chain it to the Present Info
+            VkPresentIdKHR present_id_info = {
+                .sType          = VK_STRUCTURE_TYPE_PRESENT_ID_KHR,
+                .pNext          = NULL,
+                .swapchainCount = 1,
+                .pPresentIds    = &current_present_id
+            };
+            presentInfo.pNext = &present_id_info;
+
             PFN_vkQueuePresentKHR pfnPresent = (PFN_vkQueuePresentKHR)dev_ctx->vkQueuePresentKHR;
             pfnPresent(dev_ctx->queue, &presentInfo);
 

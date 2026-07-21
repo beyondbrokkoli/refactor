@@ -3,6 +3,9 @@
 */
 #include "vx_wsi_gc.h"
 
+// We must define the function pointer signature if vulkan.h doesn't have it natively exposed
+typedef VkResult (*PFN_vkWaitForPresentKHR)(VkDevice device, VkSwapchainKHR swapchain, uint64_t presentId, uint64_t timeout);
+
 EXPORT void vx_pump_zombie_gc(void) {
     for (int wid = 0; wid < MAX_WINDOWS; wid++) {
         uint32_t active_gen = L(g_wsi_generation[wid]);
@@ -14,8 +17,13 @@ EXPORT void vx_pump_zombie_gc(void) {
         if (status == 2) {
             VulkanDeviceContext* dev_ctx = &g_device_ctx[wid];
 
-            // NO vkQueueWaitIdle. NO Fence checks.
-            // The multiplexer loop mathematically guarantees safety here.
+            // [THE QWEN SCALPEL]: Wait specifically for the OS Compositor to release this exact swapchain.
+            if (zombie->swapchain != VK_NULL_HANDLE && zombie->last_present_id > 0 && dev_ctx->pfnWaitForPresentKHR) {
+                PFN_vkWaitForPresentKHR pfnWaitPresent = (PFN_vkWaitForPresentKHR)dev_ctx->pfnWaitForPresentKHR;
+
+                // 2000000000 ns = 2 seconds timeout to prevent complete deadlocks if the OS hangs
+                pfnWaitPresent(dev_ctx->device, zombie->swapchain, zombie->last_present_id, 2000000000);
+            }
 
             for (int i = 0; i < 10; i++) {
                 if (zombie->swapchain_views[i] != 0) {
@@ -30,7 +38,7 @@ EXPORT void vx_pump_zombie_gc(void) {
             }
 
             atomic_store_explicit((_Atomic uint32_t*)&zombie->status, 0, memory_order_release);
-            printf("[C-CORE] Tenant %d: Swapchain safely garbage collected.\n", wid);
+            printf("[C-CORE] Tenant %d: Swapchain safely garbage collected via Present Wait.\n", wid);
         }
     }
 }

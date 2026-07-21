@@ -101,6 +101,13 @@ uint32_t vx_net_hash_state(const void* data, size_t length, uint32_t initial_has
 int vx_net_stun_punch(const char* stun_server_ip, int stun_port, char* out_ip, int* out_port);
 void vx_net_shutdown(void);
 
+// This is required for VK_KHR_present_wait
+typedef struct VkPhysicalDevicePresentIdFeaturesKHR {
+    int sType;
+    void* pNext;
+    uint32_t presentId; // VkBool32
+} VkPhysicalDevicePresentIdFeaturesKHR;
+
 // Enabling VK_KHR_present_wait
 typedef struct VkPhysicalDevicePresentWaitFeaturesKHR {
     int sType;

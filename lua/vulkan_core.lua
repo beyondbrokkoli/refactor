@@ -125,11 +125,12 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
         queueCreateInfos[1].pQueuePriorities = queuePriority
     end
 
--- [INJECTION 1]: Append the present_wait extension safely
-    local ext_count = #req_extensions + 1
+    -- [INJECTION 1]: Append BOTH present extensions safely
+    local ext_count = #req_extensions + 2
     local deviceExtensions = ffi.new("const char*[?]", ext_count)
     for i, ext in ipairs(req_extensions) do deviceExtensions[i-1] = ext end
-    deviceExtensions[ext_count - 1] = "VK_KHR_present_wait" -- The new extension!
+    deviceExtensions[ext_count - 2] = "VK_KHR_present_wait"
+    deviceExtensions[ext_count - 1] = "VK_KHR_present_id" -- The missing link
 
     -- [EXISTING CHAIN]: Dynamic Rendering & Timeline Semaphores
     local dynamicRendering = ffi.new("VkPhysicalDeviceDynamicRenderingFeatures")
@@ -155,12 +156,18 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     timelineFeat.timelineSemaphore = 1
     timelineFeat.pNext = extDynamicState2
 
-    -- [INJECTION 2]: The New Present Wait Feature Link
+    -- [INJECTION 2]: Chain PresentId -> PresentWait -> Timeline
+    local presentIdFeat = ffi.new("VkPhysicalDevicePresentIdFeaturesKHR")
+    ffi.fill(presentIdFeat, ffi.sizeof(presentIdFeat))
+    presentIdFeat.sType = 1000294000 -- VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR
+    presentIdFeat.presentId = 1
+    presentIdFeat.pNext = timelineFeat -- Link to the old timeline head
+
     local presentWaitFeat = ffi.new("VkPhysicalDevicePresentWaitFeaturesKHR")
     ffi.fill(presentWaitFeat, ffi.sizeof(presentWaitFeat))
     presentWaitFeat.sType = 1000248000 -- VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR
     presentWaitFeat.presentWait = 1
-    presentWaitFeat.pNext = timelineFeat -- Link to the old head of the chain
+    presentWaitFeat.pNext = presentIdFeat -- Link to the newly created Present ID feat
 
     local deviceFeatures = ffi.new("VkPhysicalDeviceFeatures")
     ffi.fill(deviceFeatures, ffi.sizeof(deviceFeatures))
@@ -171,7 +178,7 @@ function core.finalize_device_and_swapchain(vk_state, surface_ptr, req_extension
     ffi.fill(deviceCreateInfo, ffi.sizeof(deviceCreateInfo))
     deviceCreateInfo.sType = vk_struct.device_create
 
-    -- Point the device info to the NEW head of the chain
+    -- Point the device info to the NEW head of the chain (Wait -> Id -> Timeline)
     deviceCreateInfo.pNext = presentWaitFeat
 
     deviceCreateInfo.queueCreateInfoCount = queueCount;

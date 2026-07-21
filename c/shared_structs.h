@@ -38,6 +38,7 @@ typedef struct  {
     void* pfnSetDepthTestEnable;
     void* pfnSetDepthWriteEnable;
     void* pfnSetDepthCompareOp;
+    void* pfnWaitForPresentKHR;
 } VulkanDeviceContext;
 
 #endif // VX_ENABLE_VULKAN_STRUCTS
@@ -47,6 +48,8 @@ typedef struct  {
     VkSwapchainKHR swapchain;
     uint32_t status;
     uint8_t _pad_auto_0[4];
+    uint64_t present_id_counter;
+    uint64_t last_present_id;
     uint64_t swapchain_images[10];
     uint64_t swapchain_views[10];
     VkSemaphore image_available[10];
