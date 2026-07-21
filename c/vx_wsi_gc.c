@@ -21,29 +21,29 @@ EXPORT void vx_pump_zombie_gc(void) {
 
             // [THE PROXY WAIT]
             if (active_wsi->swapchain != VK_NULL_HANDLE && dev_ctx->pfnWaitForPresentKHR) {
-                PFN_vkWaitForPresentKHR pfnWaitPresent = (PFN_vkWaitForPresentKHR)dev_ctx->pfnWaitForPresentKHR;
+                extern int vx_sys_get_resize_state(int win_id);
 
-                uint64_t current_present_id = atomic_load_explicit(
-                    (_Atomic uint64_t*)&active_wsi->present_id_counter, memory_order_acquire);
+                // 1. [THE HOISTED SHOCK ABSORBER]
+                // If X11 is actively tearing the geometry, the active WSI is compromised.
+                // Its frames might be swallowed by the void. We cannot trust the compositor
+                // to signal presentId 2. Sync the queue and smash the zombie.
+                if (vx_sys_get_resize_state(wid) == 1) {
+                    vkQueueWaitIdle(dev_ctx->queue);
+                }
+                // 2. Window is stable. We can safely trust the OS Compositor handshake.
+                else {
+                    PFN_vkWaitForPresentKHR pfnWaitPresent = (PFN_vkWaitForPresentKHR)dev_ctx->pfnWaitForPresentKHR;
+                    uint64_t current_present_id = atomic_load_explicit(
+                        (_Atomic uint64_t*)&active_wsi->present_id_counter, memory_order_acquire);
 
-                if (current_present_id >= 2) {
-                    // [TIMEOUT 0]: Non-blocking query
-                    VkResult res = pfnWaitPresent(dev_ctx->device, active_wsi->swapchain, 2, 0);
-                    if (res == VK_TIMEOUT) {
-                        continue;
-                    }
-                } else {
-                    extern int vx_sys_get_resize_state(int win_id);
-
-                    if (vx_sys_get_resize_state(wid) == 1) {
-                        // [THE CPU BLITZ SHOCK ABSORBER]
-                        // X11 is dragging. active_wsi is instantly failing, and the CPU just blitzed
-                        // the 10-frame countdown in a microsecond.
-                        // The GPU is physically still executing the zombie's command buffers.
-                        // We MUST sync the queue to let the GPU finish before dropping the hammer.
-                        vkQueueWaitIdle(dev_ctx->queue);
+                    if (current_present_id >= 2) {
+                        // [TIMEOUT 0]: Non-blocking query
+                        VkResult res = pfnWaitPresent(dev_ctx->device, active_wsi->swapchain, 2, 0);
+                        if (res == VK_TIMEOUT) {
+                            continue; // OS still processing. Poll again next loop.
+                        }
                     } else {
-                        // Window might actually just be minimized or rendering slowly. Wait patiently.
+                        // Stable window, but active WSI hasn't rendered 2 frames yet (minimized/paused).
                         continue;
                     }
                 }
