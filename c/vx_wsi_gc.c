@@ -23,15 +23,28 @@ EXPORT void vx_pump_zombie_gc(void) {
             if (active_wsi->swapchain != VK_NULL_HANDLE && dev_ctx->pfnWaitForPresentKHR) {
                 PFN_vkWaitForPresentKHR pfnWaitPresent = (PFN_vkWaitForPresentKHR)dev_ctx->pfnWaitForPresentKHR;
 
-                // [THE DEFENSIVE SPICE] Ensure the active swapchain has actually generated Present ID 2.
                 uint64_t current_present_id = atomic_load_explicit(
                     (_Atomic uint64_t*)&active_wsi->present_id_counter, memory_order_acquire);
 
                 if (current_present_id >= 2) {
-                    pfnWaitPresent(dev_ctx->device, active_wsi->swapchain, 2, 2000000000);
+                    // [TIMEOUT 0]: Non-blocking query to prevent X11 kernel wedge
+                    VkResult res = pfnWaitPresent(dev_ctx->device, active_wsi->swapchain, 2, 0);
+                    if (res == VK_TIMEOUT) {
+                        continue;
+                    }
                 } else {
-                    // Window might be minimized/paused. Skip THIS tenant and try again next loop.
-                    continue;
+                    // [THE DEADLOCK BREAKER]
+                    // We must declare the API getter so the compiler knows how to check the OS state
+                    extern int vx_sys_get_resize_state(int win_id);
+
+                    if (vx_sys_get_resize_state(wid) == 1) {
+                        // The active swapchain is OUT_OF_DATE because the user is still dragging!
+                        // It will NEVER reach present_id 2. X11 has already shattered the surface geometry.
+                        // We safely bypass the proxy wait to clear the graveyard and prevent pipeline starvation!
+                    } else {
+                        // Window might actually just be minimized or rendering slowly. Wait patiently.
+                        continue;
+                    }
                 }
             }
 

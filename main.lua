@@ -391,12 +391,23 @@ local function main()
                 if WindowAPI.get_resize_state(win_id) then
                     local new_w, new_h = WindowAPI.get_window_size(win_id)
                     if new_w > 0 and new_h > 0 and (new_w ~= tenant.width or new_h ~= tenant.height) then
-                        print(string.format("[LUA FSM] Tenant %d: Resize detected. Firing CMD 4...", win_id))
 
-                        tenant.target_w = new_w
-                        tenant.target_h = new_h
-                        WindowAPI.prepare_new_wsi(win_id, new_w, new_h)
-                        tenant.wsi_state = 1
+                        -- [THE LOCK-FREE BACKPRESSURE]
+                        -- Check if the C-Core has successfully garbage collected the previous generation
+                        local inactive_wsi_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
+                        local inactive_wsi = ffi.cast("VulkanSwapchainContext*", inactive_wsi_ptr)
+
+                        if inactive_wsi.status == 0 then
+                            print(string.format("[LUA FSM] Tenant %d: Graveyard clear. Resize detected. Firing CMD 4...", win_id))
+                            tenant.target_w = new_w
+                            tenant.target_h = new_h
+                            WindowAPI.prepare_new_wsi(win_id, new_w, new_h) -- This fires CMD 4
+                            tenant.wsi_state = 1
+                        else
+                            -- Graveyard is still occupied (status is likely 2 or ticking down)!
+                            -- We MUST ignore this resize frame and keep rendering to feed the C-Core
+                            -- multiplexer so it can tick the clock down. Do NOT transition to state 1.
+                        end
                     end
                 end
 
@@ -484,6 +495,13 @@ local function main()
                 WindowAPI.flip_wsi(win_id)
                 print(string.format("[LUA FSM] Tenant %d: Flipped to Generation %d.", win_id, next_gen))
                 tenant.wsi_state = 0
+
+                -- [THE COUNTDOWN TRIGGER: RESTORED]
+                -- After the flip, the inactive slot is now the OLD swapchain.
+                -- We MUST set its status to 13 to ignite the 10-frame multiplexer countdown!
+                local true_zombie_ptr = ffi.C.vx_sys_get_inactive_wsi_slot(win_id)
+                local true_zombie = ffi.cast("VulkanSwapchainContext*", true_zombie_ptr)
+                true_zombie.status = 13
             end
 
             -- [PROCESS LUA-SIDE ZOMBIE GC]
