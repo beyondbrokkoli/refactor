@@ -239,7 +239,14 @@ static THREAD_FUNC render_thread_loop(void* arg) {
                 5000000, win_wsi->image_available[current_frame], VK_NULL_HANDLE, &img_idx);
 
             if (res == VK_TIMEOUT || res == VK_NOT_READY) goto frame_done;
+
             if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+                // [THE SAFE SHOCK ABSORBER]
+                // We sync the queue HERE on the Render Thread!
+                // This safely clears the VVL "in use" tracking without causing
+                // a multi-threaded race condition with the GC.
+                vkQueueWaitIdle(dev_ctx->queue);
+
                 S(g_engine.mailbox.tenants[wid].window_resized, 1);
                 SLEEP_MS(10);
                 goto frame_done;
