@@ -31,7 +31,10 @@ function Swapchain.Init(vk, core_state, width, height, old_swapchain, explicit_s
     ffi.fill(swapchainInfo, ffi.sizeof(swapchainInfo))
     swapchainInfo.sType = vk_struct.swapchain_create
     swapchainInfo.surface = surface
+
+    -- [THE FIX]: Re-enable swapchain chaining!
     swapchainInfo.oldSwapchain = old_swapchain or ffi.cast("VkSwapchainKHR", 0)
+
     swapchainInfo.minImageCount = surfaceCaps.minImageCount + 1
     swapchainInfo.imageFormat = vk_format.b8g8r8a8_srgb
     swapchainInfo.imageColorSpace = vk_swapchain.color_space_srgb_nonlinear
@@ -95,13 +98,16 @@ function Swapchain.Destroy(vk, core_state, sc_state)
     if not sc_state then return end
 
     for i = 0, sc_state.imageCount - 1 do
-        if sc_state.imageViews[i] ~= nil then
+        -- [ZERO-TRUST SHIELD] cdata is never nil. We must cast to uint64_t to check for 0.
+        if sc_state.imageViews[i] ~= nil and ffi.cast("uint64_t", sc_state.imageViews[i]) ~= 0 then
             vk.vkDestroyImageView(core_state.device, sc_state.imageViews[i], nil)
+            sc_state.imageViews[i] = ffi.cast("VkImageView", 0) -- Matrix Shield
         end
     end
 
-    if sc_state.handle ~= nil then
+    if sc_state.handle ~= nil and ffi.cast("uint64_t", sc_state.handle) ~= 0 then
         vk.vkDestroySwapchainKHR(core_state.device, sc_state.handle, nil)
+        sc_state.handle = ffi.cast("VkSwapchainKHR", 0) -- Matrix Shield
     end
 end
 
